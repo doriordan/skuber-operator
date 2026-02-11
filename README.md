@@ -90,7 +90,7 @@ val reconciler = new Reconciler[Autoscaler] {
 val managerConfig = ... // this configures e.g. in which namespace (or all) the operators custom resources exist
 val manager = ControllerManager(managerConfig, k8s)
 
-val controller = ControllerBuilder[Autoscaler.Resource](manager)
+val controller = ControllerBuilder[Autoscaler](manager)
     .withReconciler(reconciler)
     // places a secondary watch on Pods in ALL namespaces
     .watchesAllNamespaces[Pod] { pod =>
