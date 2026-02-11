@@ -37,7 +37,7 @@ It builds on the established [Skuber](https://github.com/doriordan/skuber) libra
 
 *Note* Using this SDK requires Scala 3.8+ and the `experimental` flag due to use of Scala 3 macro annotations. 
 
-*Note* The status of this project is currently pre-release so to play around with building an operator, it is probably best to clone this repo and create a sub-rpoject locally for your use case, similar to the 'examples' subproject. The aim is to create an initial release quite soon and update docs accordingly.
+*Note* The status of this project is currently pre-release so to play around with building an operator, it is probably best to clone this repo and create a subproject locally for your use case, similar to the 'examples' subproject. The aim is to create an initial release quite soon and update docs accordingly.
 
 The following is a very simple example of building an operator - an Autoscaler that maintains a specified number of replicas (pods or some other workload type).
 The steps to create the operator are:

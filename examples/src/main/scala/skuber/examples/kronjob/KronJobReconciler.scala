@@ -266,7 +266,7 @@ class KronJobReconciler(using system: ActorSystem) extends Reconciler[KronJob]:
     ctx: ReconcileContext[KronJob]
   ): Future[ReconcileResult] =
     val log = ctx.log
-
+    
     // Generate deterministic job name
     val jobName = s"${cronJob.name}-${scheduledTime.toInstant.getEpochSecond}"
 
