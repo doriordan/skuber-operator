@@ -94,8 +94,8 @@ class AutoscalerControllerSpec extends AsyncFlatSpec with PekkoK8SFixture with E
     val stopStatusUpdater = new AtomicBoolean(false)
 
     // Create the reconciler
-    val reconciler = new Reconciler[Autoscaler.Resource] {
-      def reconcile(resource: Autoscaler.Resource, ctx: ReconcileContext[Autoscaler.Resource]): Future[ReconcileResult] = {
+    val reconciler = new Reconciler[Autoscaler] {
+      def reconcile(resource: Autoscaler, ctx: ReconcileContext[Autoscaler]): Future[ReconcileResult] = {
         val count = reconcileCount.incrementAndGet()
         val currentReplicas = resource.status.map(_.availableReplicas).getOrElse(0)
         val desired = resource.spec.desiredReplicas
