@@ -42,8 +42,9 @@ It builds on the established [Skuber](https://github.com/doriordan/skuber) libra
 The following is a very simple example of building an operator - an Autoscaler that maintains a specified number of replicas (pods or some other workload type).
 The steps to create the operator are:
 
-- define the Autoscaler custom resource type as above
-- implement the reconciliation logic
+Step 1: Define the Autoscaler custom resource type as above
+
+Step 2: Implement the reconciliation logic as below:
 ```scala
 val reconciler = new Reconciler[Autoscaler] {
       def reconcile(resource: Autoscaler, ctx: ReconcileContext[Autoscaler]): Future[ReconcileResult] = {
@@ -90,7 +91,12 @@ val reconciler = new Reconciler[Autoscaler] {
       }
 }  
 ```
-- create and register the controller
+The above reconciler carries out some simple steps to drive the actual state of the resources it controls to the desired state as specified in the Autoscaler resource spec:
+- first check if the Autoscaler status reflects actual status (replica count) on the cluster, updating if not
+- next check if the actual replica count is the same as the desired replica count - if not, it either creates or deletes a replica (pod) as required
+- it also produces events which Kubernetes stores and returns to users when requested.
+
+Step 3: Create and register a controller that uses the above reconciler.
 
 ```scala
 
@@ -112,7 +118,24 @@ val controller = ControllerBuilder[Autoscaler](manager)
 
 manager.add(controller)
 ```
-Note the `watches` method call(s) above - this ensures that the controller will not just watch the Autoscaler resources but also watch for any Pod status changes and then trigger reconciliation for the "owning" Autoscaler custom resource, if there is one for that pod - this is often necessary to ensure status changes of owned resources are detected and reconciled. Also you can see that you can place a secondary watch on pods in a *different* namespace to the Autoscaler one, or in *all* namespaces depending on your requirements.
+Note the `watches` method call(s) above - this ensures that the controller will not just watch the Autoscaler resources but also watch for any Pod status changes and then trigger reconciliation for the "owning" Autoscaler custom resource, if there is one for that pod. 
+
+In this case this ensures that if (for example) some pods are lost due to a cluster node failing or the pod being evicted due to memory pressure, the reconciler will be triggered and can bring up replacements.
+
+In general watching owned/controlled resources is usually necessary to ensure any changes in their status are detected and reconciled. 
+
+Also you can see that you can place a watch on relevant resources in the *same* namespace or a *different* namespace to the Autoscaler one, or in *all* namespaces depending on your requirements.
+
+A simpler alternative exists if your controller has an explicit ownership relation using [owner references](https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/#owner-references-in-object-specifications) with the resources it controls - in this case you can simply use the `owns` method without needing to provide a function that knows how to get the owner key from the owned resource:
+
+```scala
+val controller = ControllerBuilder[KronJob](manager)
+    .withReconciler(reconciler)
+    .owns[Job]
+    .withConcurrency(1)
+    .build()
+```
+
 
 See the [examples](examples/src/main/scala/skuber/examples/kronjob) subproject for a more complex operator that implements CronJob functionality for scheduling and controlling Kubernetes Jobs.
 
