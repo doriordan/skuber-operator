@@ -52,20 +52,28 @@ val reconciler = new Reconciler[Autoscaler] {
         val actualCurrentReplica = ctx.client.usingNamespace("autoscaled_replicas").list[PodList]().map { // return list size }
           val desiredReplicas = resource.spec.desiredReplicas
 
-          if (actualCurrentReplicas != currentStatusReplicas) {
+          val updateStatusIfNecessary = if (actualCurrentReplicas != currentStatusReplicas) {
             // update Autoscaler status to reflect real count
             val currentStatus = kronJob.status.getOrElse(KronJobResource.Status())
             val newStatus = currentStatus.copy(availableReplicas = actualCurrentReplicas)
             val updated = kronJob.copy(status = Some(newStatus))
             ctx.client.usingNamespace(resource.metadata.namespace).updateStatus(updated)
+          } else {
+            Future.successful()  no status update needed
           }
           // now add or remove a new replica if desired != actual replicas
-          if (actualCurrentReplicas > desiredReplicas) {
+          val addOrRemoveReplicaIfNecessary = if (actualCurrentReplicas > desiredReplicas) {
             // use ctx.client to select a pod for deletion and delete it
           } else if (actualCurrentReplicas < desiredReplicas) {
             // use ctx.client together with the specified 'image' in the Autoscaler spec
             // to create a new replica (pod)
+          } else {
+            Future.successful()
           }
+          for {
+            _ <- updateStatusIfNecessary
+            _ <- addOrRemoveReplicaIfNecessary
+          } yield ReconcileResult.Done
         }
       }
 }  
