@@ -52,13 +52,41 @@ class ControllerBuilder[R <: ObjectResource](
    * The mapper returns the NamespacedName of the R to reconcile.
    *
    * @tparam O The related resource type
+   * @param namespace Namespace scope for watching (default: use manager's config)
    * @param mapper Function to extract the owning R's key from O
    */
-  def watches[O <: ObjectResource](mapper: O => Option[NamespacedName])(
+  def watches[O <: ObjectResource](
+    namespace: WatchNamespace = WatchNamespace.ManagerDefault
+  )(mapper: O => Option[NamespacedName])(
     using ord: ResourceDefinition[O], ofmt: Format[O]
   ): this.type =
-    _watches = WatchedResource[O](ord, ofmt, mapper) :: _watches
+    _watches = WatchedResource[O](ord, ofmt, mapper, namespace) :: _watches
     this
+
+  /**
+   * Watch related resources in all namespaces with custom key extraction.
+   * Convenience method equivalent to watches(WatchNamespace.AllNamespaces)(mapper).
+   *
+   * @tparam O The related resource type
+   * @param mapper Function to extract the owning R's key from O
+   */
+  def watchesAllNamespaces[O <: ObjectResource](mapper: O => Option[NamespacedName])(
+    using ord: ResourceDefinition[O], ofmt: Format[O]
+  ): this.type =
+    watches(WatchNamespace.AllNamespaces)(mapper)
+
+  /**
+   * Watch related resources in a specific namespace with custom key extraction.
+   * Convenience method equivalent to watches(WatchNamespace.Specific(ns))(mapper).
+   *
+   * @tparam O The related resource type
+   * @param namespace The namespace to watch
+   * @param mapper Function to extract the owning R's key from O
+   */
+  def watchesInNamespace[O <: ObjectResource](namespace: String)(mapper: O => Option[NamespacedName])(
+    using ord: ResourceDefinition[O], ofmt: Format[O]
+  ): this.type =
+    watches(WatchNamespace.Specific(namespace))(mapper)
 
   /**
    * Set maximum concurrent reconciliations.
@@ -102,10 +130,11 @@ private[controller] case class OwnedResource[O <: ObjectResource](
 )
 
 /**
- * Describes a watched resource type with custom mapping.
+ * Describes a watched resource type with custom mapping and namespace scope.
  */
 private[controller] case class WatchedResource[O <: ObjectResource](
   rd: ResourceDefinition[O],
   fmt: Format[O],
-  mapper: O => Option[NamespacedName]
+  mapper: O => Option[NamespacedName],
+  namespace: WatchNamespace
 )

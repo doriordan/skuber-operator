@@ -18,12 +18,25 @@ trait SharedCache:
 
   /**
    * Get or create a cache for a specific resource type.
+   * Uses the manager's default namespace configuration.
    * First call triggers List+Watch; subsequent calls return same cache.
    *
    * @tparam R The resource type
    * @return The resource cache for this type
    */
   def forResource[R <: ObjectResource](
+    using rd: ResourceDefinition[R], fmt: Format[R]
+  ): ResourceCache[R]
+
+  /**
+   * Get or create a cache for a specific resource type in a specific namespace scope.
+   * First call triggers List+Watch; subsequent calls return same cache.
+   *
+   * @tparam R The resource type
+   * @param namespaceOverride None = all namespaces, Some(ns) = only that namespace
+   * @return The resource cache for this type and namespace scope
+   */
+  def forResourceInNamespace[R <: ObjectResource](namespaceOverride: Option[String])(
     using rd: ResourceDefinition[R], fmt: Format[R]
   ): ResourceCache[R]
 

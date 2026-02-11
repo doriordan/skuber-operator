@@ -74,16 +74,25 @@ val reconciler = new Reconciler[Autoscaler] {
 
 ```scala
 
-val managerConfig = ... // this configures e.e.g which namespace (or all) the operator manages
+val managerConfig = ... // this configures e.g. in which namespace (or all) the operators custom resources exist
 val manager = ControllerManager(managerConfig, k8s)
 
 val controller = ControllerBuilder[Autoscaler.Resource](manager)
     .withReconciler(reconciler)
+    // places a secondary watch on Pods in ALL namespaces
+    .watchesAllNamespaces[Pod] { pod =>
+      pod.metadata.labels.get(OwnerLabel).map { autoscalerName =>
+        NamespacedName(pod.metadata.namespace, autoscalerName)
+      }
+    }
+    // OR watch Pods only in "production" namespace
+    // .watchesInNamespace[Pod]("production") { pod => ... }
     .withConcurrency(1)
     .build()
 
 manager.add(controller)
 ```
+Note the `watches` method call(s) above - this ensures that the controller will not just watch the Autoscaler resources but also watch for any Pod status changes and then trigger reconciliation for the "owning" Autoscaler custom resource, if there is one for that pod - this is often necessary to ensure status changes of owned resources are detected and reconciled. Also you can see that you can place a secondary watch on pods in a *different* namespace to the Autoscaler one, or in *all* namespaces depending on your requirements.
 
 See the [examples](examples/src/main/scala/skuber/examples/kronjob) subproject for a more complex operator that implements CronJob functionality for scheduling and controlling Kubernetes Jobs.
 

@@ -37,13 +37,19 @@ class PekkoSharedCache(
   def forResource[R <: ObjectResource](
     using rd: ResourceDefinition[R], fmt: Format[R]
   ): ResourceCache[R] =
-    val key = cacheKey(rd)
+    forResourceInNamespace(watchNamespace)
+
+  def forResourceInNamespace[R <: ObjectResource](namespaceOverride: Option[String])(
+    using rd: ResourceDefinition[R], fmt: Format[R]
+  ): ResourceCache[R] =
+    val key = cacheKey(rd, namespaceOverride)
     caches.getOrElseUpdate(key, {
-      log.info(s"Creating cache for ${rd.spec.names.kind}")
+      val nsDesc = namespaceOverride.map(ns => s" in namespace '$ns'").getOrElse(" in all namespaces")
+      log.info(s"Creating cache for ${rd.spec.names.kind}$nsDesc")
       val cache = new InMemoryResourceCache[R]()
 
       // Create reflector but don't start it yet
-      val reflector = new Reflector[R](client, cache, config, watchNamespace)
+      val reflector = new Reflector[R](client, cache, config, namespaceOverride)
       reflectors.put(key, reflector)
 
       // If already started, start this reflector too
@@ -88,5 +94,6 @@ class PekkoSharedCache(
   def hasSynced: Boolean =
     reflectors.values.forall(_.hasSynced)
 
-  private def cacheKey(rd: ResourceDefinition[?]): String =
-    s"${rd.spec.group.getOrElse("")}/${rd.spec.defaultVersion}/${rd.spec.names.kind}"
+  private def cacheKey(rd: ResourceDefinition[?], namespace: Option[String]): String =
+    val nsKey = namespace.getOrElse("*")
+    s"${rd.spec.group.getOrElse("")}/${rd.spec.defaultVersion}/${rd.spec.names.kind}@$nsKey"

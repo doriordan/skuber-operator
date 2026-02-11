@@ -108,7 +108,21 @@ class PekkoController[R <: ObjectResource](
     given ResourceDefinition[O] = watched.rd
     given Format[O] = watched.fmt
 
-    val cache = manager.cache.forResource[O]
+    // Determine the namespace scope for this watch
+    val namespaceOverride: Option[String] = watched.namespace match
+      case WatchNamespace.ManagerDefault => None  // Will use manager's forResource which has default ns
+      case WatchNamespace.AllNamespaces => None   // Explicitly all namespaces
+      case WatchNamespace.Specific(ns) => Some(ns)
+
+    // Get cache with appropriate namespace scope
+    val cache = watched.namespace match
+      case WatchNamespace.ManagerDefault =>
+        manager.cache.forResource[O]
+      case WatchNamespace.AllNamespaces =>
+        manager.cache.forResourceInNamespace[O](None)  // None = all namespaces
+      case WatchNamespace.Specific(ns) =>
+        manager.cache.forResourceInNamespace[O](Some(ns))
+
     cache.events.runForeach {
       case CacheEvent.Added(resource) =>
         watched.mapper(resource).foreach(workQueue.add)
