@@ -49,7 +49,9 @@ val reconciler = new Reconciler[Autoscaler] {
       def reconcile(resource: Autoscaler, ctx: ReconcileContext[Autoscaler]): Future[ReconcileResult] = {
         val currentStatusReplicas = resource.status.map(_.availableReplicas).getOrElse(0)
         // use the skuber client (available on `ctx` parameter) to find out how many replicas are actually running in the taregt namespace
-        ctx.client.usingNamespace("autoscaled_replicas").list[PodList]()
+        ctx.client
+          .usingNamespace("autoscaled_replica_ns")
+          .list[PodList]()
           .map { // return list size }
           .flatMap { actualCurrentReplicas =>
             val desiredReplicas = resource.spec.desiredReplicas
