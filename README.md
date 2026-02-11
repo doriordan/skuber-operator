@@ -29,7 +29,7 @@ The SDK provides a framework to build controllers and operators based on these u
 It broadly follows the well-understood and tested Kubernetes runtime controller/operator design as implemented by [kubebuilder](https://book.kubebuilder.io/introduction.html) amongst others, including:
 - *controller*: manages the main control loop for a particular custom resource type, using the cache/reflector to receive updates and triggering reconciliation
 - *reconciler*: application-defined logic for driving updates to managed resources based on updates to watched resources (reconciliation) 
-- *reflector*: continually reflects the state of the watched resources into the local cache, by continually watching events on the resources complemented by periodic (re)syncing which refreshes the cache with a fresh list of the resources from the cluster.
+- *cache and reflector*: the reflector continually reflects the state of the watched resources into a local cache, by initially retrieving all resources from the cluster and storing them in the cache and then continually watching events for further updates on the cached resources.
 
 It builds on the established [Skuber](https://github.com/doriordan/skuber) library for its core Kubernetes client functionality, including the list/watch functionality of the reflector. Under the hood it uses [Pekko](https://pekko.apache.org/) streams for event handling, with benefits for managing backpressure, rate-limiting and so on.
 
@@ -47,6 +47,7 @@ The steps to create the operator are:
 ```scala
 val reconciler = new Reconciler[Autoscaler] {
       def reconcile(resource: Autoscaler, ctx: ReconcileContext[Autoscaler]): Future[ReconcileResult] = {
+        val recorder = ctx.eventRecorder // for recording events with Kubernetes that can be examined using e.g. `kubectl get events`
         val currentStatusReplicas = resource.status.map(_.availableReplicas).getOrElse(0)
         // use the skuber client (available on `ctx` parameter) to find out how many replicas are actually running in the taregt namespace
         ctx.client
@@ -67,10 +68,14 @@ val reconciler = new Reconciler[Autoscaler] {
             }
             // now add or remove a new replica if desired != actual replicas
             val addOrRemoveReplicaIfNecessary = if (actualCurrentReplicas > desiredReplicas) {
-              // use ctx.client to select a pod for deletion and delete it
+              // select a pod for deletion and delete it
+              val selectedPodName = ...
+              ctx.client.delete(selectedPodName).andThen { _ => recorder.normal("REPLICA_DELETED", selectedPodName) }
             } else if (actualCurrentReplicas < desiredReplicas) {
               // use ctx.client together with the specified 'image' in the Autoscaler spec
               // to create a new replica (pod)
+              val newPod = ...
+              ctx.client.creat(newPod).andThen { _ => recorder.normal("REPLICA_CREATED, newPod.name) }
             } else {
               Future.successful()
             }
