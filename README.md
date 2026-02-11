@@ -31,7 +31,7 @@ It broadly follows the well-understood and tested Kubernetes runtime controller/
 - *reconciler*: application-defined logic for driving updates to managed resources based on updates to watched resources (reconciliation) 
 - *reflector*: continually reflects the state of the watched resources into the local cache, by continually watching events on the resources complemented by periodic (re)syncing which refreshes the cache with a fresh list of the resources from the cluster.
 
-It builds on the established [Skuber](https://github.com/doriordan/skuber) library for its core Kubernetes client functionality, including the list/watch funcionality of the reflector. Under the hood it uses Pekko streams for event handling, which manages backpressure, rate-limiting and so on.
+It builds on the established [Skuber](https://github.com/doriordan/skuber) library for its core Kubernetes client functionality, including the list/watch functionality of the reflector. Under the hood it uses [Pekko](https://pekko.apache.org/) streams for event handling, with benefits for managing backpressure, rate-limiting and so on.
 
 ## Quickstart
 
