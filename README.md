@@ -43,7 +43,9 @@ It builds on the established [Skuber](https://github.com/doriordan/skuber) libra
 The following is a very simple example of building an operator - an Autoscaler that maintains a specified number of replicas (pods or some other workload type).
 The steps to create the operator are:
 
-Step 1: Define the Autoscaler custom resource type as above. This tells your controller everything it needs to know about the custom resource type, but you will also need to define a corresponding [CRD](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#customresourcedefinitions) that describes the same custom resource type to Kubernetes itself - this can be done manually on the cluster or programmatically (see the `AutoscalerCRDFixture` in the integration tests for an example of the latter)
+Step 1: Define the Autoscaler custom resource type as above. 
+
+(This tells your controller everything it needs to know about the custom resource type, but you will also need to define a corresponding [CRD](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#customresourcedefinitions) that describes the same custom resource type to Kubernetes itself - this can be done manually on the cluster or programmatically (see the `AutoscalerCRDFixture` in the integration tests for an example of the latter)
 
 Step 2: Implement the reconciliation logic as below:
 ```scala
