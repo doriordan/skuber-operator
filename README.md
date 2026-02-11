@@ -77,7 +77,7 @@ val reconciler = new Reconciler[Autoscaler] {
               // use ctx.client together with the specified 'image' in the Autoscaler spec
               // to create a new replica (pod)
               val newPod = ...
-              k8s.create(newPod).andThen { _ => recorder.normal("REPLICA_CREATED, newPod.name) }
+              k8s.create(newPod).andThen { _ => recorder.normal("REPLICA_CREATED", newPod.name) }
             } else {
               Future.successful()
             }
