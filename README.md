@@ -47,11 +47,13 @@ The steps to create the operator are:
 ```scala
 val reconciler = new Reconciler[Autoscaler] {
       def reconcile(resource: Autoscaler, ctx: ReconcileContext[Autoscaler]): Future[ReconcileResult] = {
-        val recorder = ctx.eventRecorder // for recording events with Kubernetes that can be examined using e.g. `kubectl get events`
+        // get an event recorder that can be used to publish controller events to Kubernetes that can
+        // later be examined using e.g. `kubectl events`
+        val recorder = ctx.eventRecorder
+        // get the underlying Skuber client for accessing managed resources
+        val k8s = ctx.client
         val currentStatusReplicas = resource.status.map(_.availableReplicas).getOrElse(0)
-        // use the skuber client (available on `ctx` parameter) to find out how many replicas are actually running in the taregt namespace
-        ctx.client
-          .usingNamespace("autoscaled_replica_ns")
+        k8s.usingNamespace("autoscaled_replica_ns")
           .list[PodList]()
           .map { // return list size }
           .flatMap { actualCurrentReplicas =>
@@ -62,7 +64,7 @@ val reconciler = new Reconciler[Autoscaler] {
               val currentStatus = kronJob.status.getOrElse(KronJobResource.Status())
               val newStatus = currentStatus.copy(availableReplicas = actualCurrentReplicas)
               val updated = kronJob.copy(status = Some(newStatus))
-              ctx.client.usingNamespace(resource.metadata.namespace).updateStatus(updated)
+              k8s.usingNamespace(resource.metadata.namespace).updateStatus(updated)
             } else {
               Future.successful()  no status update needed
             }
@@ -70,12 +72,12 @@ val reconciler = new Reconciler[Autoscaler] {
             val addOrRemoveReplicaIfNecessary = if (actualCurrentReplicas > desiredReplicas) {
               // select a pod for deletion and delete it
               val selectedPodName = ...
-              ctx.client.delete(selectedPodName).andThen { _ => recorder.normal("REPLICA_DELETED", selectedPodName) }
+              k8s.delete(selectedPodName).andThen { _ => recorder.normal("REPLICA_DELETED", selectedPodName) }
             } else if (actualCurrentReplicas < desiredReplicas) {
               // use ctx.client together with the specified 'image' in the Autoscaler spec
               // to create a new replica (pod)
               val newPod = ...
-              ctx.client.creat(newPod).andThen { _ => recorder.normal("REPLICA_CREATED, newPod.name) }
+              k8s.create(newPod).andThen { _ => recorder.normal("REPLICA_CREATED, newPod.name) }
             } else {
               Future.successful()
             }
