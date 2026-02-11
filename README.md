@@ -18,10 +18,11 @@ object Autoscaler extends CustomResourceDef[Autoscaler.Spec, Autoscaler.Status]:
   case class Status(availableReplicas: Int, ready: Boolean)
 
 ```
+The `@customResource` macro generates all the code needed to use `Autoscaler` as a custom resource type, including creating, updating, retrieving, listing, removing and watching the resources on a cluster.
 
 The SDK provides a framework to build controllers and operators based on these user-defined custom resources and the [Operator Pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
 
-It broadly follows the well-understood and tested Kubernetes runtime controller/operator design as exemplified by [kubebuilder](https://book.kubebuilder.io/introduction.html), supporting transparent local caching of resources, work queuing, reconciliation and finalizers.
+It broadly follows the well-understood and tested Kubernetes runtime controller/operator design as exemplified by [kubebuilder](https://book.kubebuilder.io/introduction.html), supporting transparent local caching of relevant cluster resources, work queuing, event-driven reconciliation loops and finalizers.
 
 It builds on the established [Skuber](https://github.com/doriordan/skuber) library for its core Kubernetes client functionality, including use  of Pekko streams under the covers to handle events for the controllers, including handling of backpressure, rate-limiting and so on.
 
