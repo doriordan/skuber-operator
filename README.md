@@ -49,31 +49,34 @@ val reconciler = new Reconciler[Autoscaler] {
       def reconcile(resource: Autoscaler, ctx: ReconcileContext[Autoscaler]): Future[ReconcileResult] = {
         val currentStatusReplicas = resource.status.map(_.availableReplicas).getOrElse(0)
         // use the skuber client (available on `ctx` parameter) to find out how many replicas are actually running in the taregt namespace
-        val actualCurrentReplica = ctx.client.usingNamespace("autoscaled_replicas").list[PodList]().flatMap { // return list size }
-          val desiredReplicas = resource.spec.desiredReplicas
-
-          val updateStatusIfNecessary = if (actualCurrentReplicas != currentStatusReplicas) {
-            // update Autoscaler status to reflect real count
-            val currentStatus = kronJob.status.getOrElse(KronJobResource.Status())
-            val newStatus = currentStatus.copy(availableReplicas = actualCurrentReplicas)
-            val updated = kronJob.copy(status = Some(newStatus))
-            ctx.client.usingNamespace(resource.metadata.namespace).updateStatus(updated)
-          } else {
-            Future.successful()  no status update needed
+        ctx.client.usingNamespace("autoscaled_replicas").list[PodList]()
+          .map { // return list size }
+          .flatMap { actualCurrentReplicas =>
+            val desiredReplicas = resource.spec.desiredReplicas
+  
+            val updateStatusIfNecessary = if (actualCurrentReplicas != currentStatusReplicas) {
+              // update Autoscaler status to reflect real count
+              val currentStatus = kronJob.status.getOrElse(KronJobResource.Status())
+              val newStatus = currentStatus.copy(availableReplicas = actualCurrentReplicas)
+              val updated = kronJob.copy(status = Some(newStatus))
+              ctx.client.usingNamespace(resource.metadata.namespace).updateStatus(updated)
+            } else {
+              Future.successful()  no status update needed
+            }
+            // now add or remove a new replica if desired != actual replicas
+            val addOrRemoveReplicaIfNecessary = if (actualCurrentReplicas > desiredReplicas) {
+              // use ctx.client to select a pod for deletion and delete it
+            } else if (actualCurrentReplicas < desiredReplicas) {
+              // use ctx.client together with the specified 'image' in the Autoscaler spec
+              // to create a new replica (pod)
+            } else {
+              Future.successful()
+            }
+            for {
+              _ <- updateStatusIfNecessary
+              _ <- addOrRemoveReplicaIfNecessary
+            } yield ReconcileResult.Done
           }
-          // now add or remove a new replica if desired != actual replicas
-          val addOrRemoveReplicaIfNecessary = if (actualCurrentReplicas > desiredReplicas) {
-            // use ctx.client to select a pod for deletion and delete it
-          } else if (actualCurrentReplicas < desiredReplicas) {
-            // use ctx.client together with the specified 'image' in the Autoscaler spec
-            // to create a new replica (pod)
-          } else {
-            Future.successful()
-          }
-          for {
-            _ <- updateStatusIfNecessary
-            _ <- addOrRemoveReplicaIfNecessary
-          } yield ReconcileResult.Done
         }
       }
 }  
