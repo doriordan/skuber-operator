@@ -8,7 +8,7 @@ import skuber.model.NonCoreResourceSpecification
 import skuber.model.apiextensions.v1.CustomResourceDefinition
 
 /**
-  * Test fixture for creating the autoscsler CRD that needs to be setup on the cluster for the tests to run.
+  * Test fixture for creating the autoscaler CRD that needs to be setup on the cluster for the tests to run.
   */
 object AutoscalerCRDFixture:
 

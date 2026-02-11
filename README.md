@@ -23,6 +23,7 @@ object Autoscaler extends CustomResourceDef[Autoscaler.Spec, Autoscaler.Status]:
 type Autoscaler = Autoscaler.Resource
 ```
 The `@customResource` macro generates all the code needed to use `Autoscaler` as a custom resource type, including creating, updating, retrieving, listing, removing and watching the resources on a cluster.
+The annotated properties group, kind and version uniquely identify this custom resource type to the Kubernetes API, while the Spec and Status nested case classes define the content of the resources.
 
 The SDK provides a framework to build controllers and operators based on these user-defined custom resources and the [Operator Pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
 
@@ -42,7 +43,7 @@ It builds on the established [Skuber](https://github.com/doriordan/skuber) libra
 The following is a very simple example of building an operator - an Autoscaler that maintains a specified number of replicas (pods or some other workload type).
 The steps to create the operator are:
 
-Step 1: Define the Autoscaler custom resource type as above
+Step 1: Define the Autoscaler custom resource type as above. This tells your controller everything it needs to know about the custom resource type, but you will also need to define a corresponding [CRD](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#customresourcedefinitions) that describes the same custom resource type to Kubernetes itself - this can be done manually on the cluster or programmatically (see the `AutoscalerCRDFixture` in the integration tests for an example of the latter)
 
 Step 2: Implement the reconciliation logic as below:
 ```scala
