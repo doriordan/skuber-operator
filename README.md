@@ -56,15 +56,15 @@ val reconciler = new Reconciler[Autoscaler] {
         val currentStatusReplicas = resource.status.map(_.availableReplicas).getOrElse(0)
         k8s.usingNamespace("autoscaled_replica_ns")
           .list[PodList]()
-          .map { // return list size }
-          .flatMap { actualCurrentReplicas =>
+          .map { // ...  count pods in the returned pod list that are Pending or Running }
+          .flatMap { actualAvailableReplicas =>
             val desiredReplicas = resource.spec.desiredReplicas
   
-            val updateStatusIfNecessary = if (actualCurrentReplicas != currentStatusReplicas) {
+            val updateStatusIfNecessary = if (actualAvailableReplicas != currentStatusReplicas) {
               // update Autoscaler status to reflect real count
-              val currentStatus = kronJob.status.getOrElse(KronJobResource.Status())
-              val newStatus = currentStatus.copy(availableReplicas = actualCurrentReplicas)
-              val updated = kronJob.copy(status = Some(newStatus))
+              val currentStatus = resource.status.getOrElse(Autoscaler.Status())
+              val newStatus = currentStatus.copy(availableReplicas = actualAvailableReplicas)
+              val updated = resource.copy(status = Some(newStatus))
               k8s.usingNamespace(resource.metadata.namespace).updateStatus(updated)
             } else {
               Future.successful()  no status update needed
