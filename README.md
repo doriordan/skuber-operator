@@ -16,7 +16,7 @@ The SDK enables developers to easily define Kubernetes custom resources as annot
   statusSubresource = true
 )
 object Autoscaler extends CustomResourceDef[Autoscaler.Spec, Autoscaler.Status]:
-  case class Spec(desiredReplicas: Int, image: String)
+  case class Spec(targetNamespace: String, desiredReplicas: Int, image: String)
   case class Status(availableReplicas: Int, ready: Boolean)
 
 // OPTIONAL type alias that slightly simplifies generic type parameters
@@ -40,7 +40,7 @@ It builds on the established [Skuber](https://github.com/doriordan/skuber) libra
 
 *Note* The status of this project is currently pre-release so to play around with building an operator, it is probably best to clone this repo and create a subproject locally for your use case, similar to the 'examples' subproject. The aim is to create an initial release quite soon and update docs accordingly.
 
-The following is a very simple example of building an operator - an Autoscaler that maintains a specified number of replicas (pods or some other workload type).
+The following is a very simple example of building an operator (more a controller really) - an Autoscaler that maintains a specified number of replicas (in this case pods) that a user can scale up or down by simply changing the spec on the custom resource.
 The steps to create the operator are:
 
 Step 1: Define the Autoscaler custom resource type as above. 
@@ -50,38 +50,44 @@ Step 1: Define the Autoscaler custom resource type as above.
 Step 2: Implement the reconciliation logic as below:
 ```scala
 val reconciler = new Reconciler[Autoscaler] {
-      def reconcile(resource: Autoscaler, ctx: ReconcileContext[Autoscaler]): Future[ReconcileResult] = {
+      def reconcile(autoscaler: Autoscaler, ctx: ReconcileContext[Autoscaler]): Future[ReconcileResult] = {
         // get an event recorder that can be used to publish controller events to Kubernetes that can
         // later be examined using e.g. `kubectl events`
         val recorder = ctx.eventRecorder
         // get the underlying Skuber client for accessing managed resources
         val k8s = ctx.client
-        val currentStatusReplicas = resource.status.map(_.availableReplicas).getOrElse(0)
-        k8s.usingNamespace("autoscaled_replica_ns")
+        val currentStatusReplicas = autoscaler.status.map(_.availableReplicas).getOrElse(0)
+        k8s.usingNamespace(autoscaler.spec.targetNamespace)
           .list[PodList]()
-          .map { // ...  count pods in the returned pod list that are Pending or Running }
-          .flatMap { actualAvailableReplicas =>
-            val desiredReplicas = resource.spec.desiredReplicas
+          .map { // ...  count pods in the returned pod list that are either Pending or Running as available }
+          .flatMap { pendingOrRunningReplicas =>
+            val desiredReplicas = autoscaler.spec.desiredReplicas
   
-            val updateStatusIfNecessary = if (actualAvailableReplicas != currentStatusReplicas) {
+            val updateStatusIfNecessary = if (pendingOrRunningReplicas != currentStatusReplicas) {
               // update Autoscaler status to reflect real count
-              val currentStatus = resource.status.getOrElse(Autoscaler.Status())
-              val newStatus = currentStatus.copy(availableReplicas = actualAvailableReplicas)
-              val updated = resource.copy(status = Some(newStatus))
-              k8s.usingNamespace(resource.metadata.namespace).updateStatus(updated)
+              val currentStatus = autoscaler.status.getOrElse(Autoscaler.Status())
+              val newStatus = currentStatus.copy(availableReplicas = pendingOrRunningReplicas)
+              val updated = autoscaler.copy(status = Some(newStatus))
+              k8s.usingNamespace(autoscaler.metadata.namespace)
+                .updateStatus(updated)
             } else {
-              Future.successful()  no status update needed
+              Future.successful()  // no status update needed
             }
             // now add or remove a new replica if desired != actual replicas
             val addOrRemoveReplicaIfNecessary = if (actualCurrentReplicas > desiredReplicas) {
               // select a pod for deletion and delete it
               val selectedPodName = ...
-              k8s.delete(selectedPodName).andThen { _ => recorder.normal("REPLICA_DELETED", selectedPodName) }
+              k8s.usingNamespace(autoscaler.spec.targetNamespace)
+                .delete(selectedPodName)
+                .andThen { _ => recorder.normal("REPLICA_DELETED", selectedPodName) }
             } else if (actualCurrentReplicas < desiredReplicas) {
-              // use ctx.client together with the specified 'image' in the Autoscaler spec
-              // to create a new replica (pod)
-              val newPod = ...
-              k8s.create(newPod).andThen { _ => recorder.normal("REPLICA_CREATED", newPod.name) }
+              // build a new replica (pod) 
+              val newPod = buildReplica(autoscaler.spec.targetNamespace, autoscaler.spec.image)
+                .addLabel(OwnerLabel -> NamespacedName(autoscaler.namespace, autoscaler.name))
+              k8s.usingNamespace(autoscaler.spec.targetNamespace)
+                .create(newPod)
+                .addLabel(OwnerLabel -> NamespacedName(autoscaler.namespace, autoscaler.name))
+                .andThen { _ => recorder.normal("REPLICA_CREATED", newPod.name) }
             } else {
               Future.successful()
             }
@@ -99,37 +105,38 @@ The above reconciler carries out some simple steps to drive the actual state of 
 - next check if the actual replica count is the same as the desired replica count - if not, it either creates or deletes a replica (pod) as required
 - it also produces events which Kubernetes stores and returns to users when requested.
 
-Step 3: Create and register a controller that uses the above reconciler.
+Step 3: Create and start a controller that uses the above reconciler.
 
 ```scala
 
 val managerConfig = ... // this configures e.g. in which namespace (or all) the operators custom resources exist
 val manager = ControllerManager(managerConfig, k8s)
 
+val OwnerLabel = "..."
+val toOwner = pod: Pod => pod.metadata.labels.get(OwnerLabel).map(NamespacedName.fromString)
+
 val controller = ControllerBuilder[Autoscaler](manager)
     .withReconciler(reconciler)
-    // places a secondary watch on Pods in ALL namespaces
-    .watchesAllNamespaces[Pod] { pod =>
-      pod.metadata.labels.get(OwnerLabel).map { autoscalerName =>
-        NamespacedName(pod.metadata.namespace, autoscalerName)
-      }
-    }
-    // OR watch Pods only in "production" namespace
-    // .watchesInNamespace[Pod]("production") { pod => ... }
+    .watchesInNamespace[Pod]("groupOneReplicas", toOwner)
+    .watchesInNamespace[Pod]("groupTwoReplicas", toOwner)
     .withConcurrency(1)
     .build()
 
 manager.add(controller)
-```
-Note the `watches` method call(s) above - this ensures that the controller will not just watch the Autoscaler resources but also watch for any Pod status changes and then trigger reconciliation for the "owning" Autoscaler custom resource, if there is one for that pod. 
 
-In this case this ensures that if (for example) some pods are lost due to a cluster node failing or the pod being evicted due to memory pressure, the reconciler will be triggered and can bring up replacements.
+val startFuture = manager.start()
+```
+Note the `watchesInNamespaces` method calls above. This ensures that the controller will not just watch the Autoscaler resources but also watch for any changes to "owned" resources (pods in this case) in the specified namespaces. 
+
+The function passed to the watch method identifies the owner custom resource (as an optional `NamespacedName`) from the watched resource, which allows the controller to fetch that specific owner resource from the cache and pass it to to the reconciler, which can then drive any updates needed based on the changes to the owned resources.
+
+In this case this ensures that if (for example) some pods are lost or fail due to a cluster node failing or the pod being evicted due to memory pressure, the reconciler will be invoked with the appropriate Autoscaler resource and can bring up replacement pods.
 
 In general watching owned/controlled resources is usually necessary to ensure any changes in their status are detected and reconciled. 
 
 Also you can see that you can place a watch on relevant resources in the *same* namespace or a *different* namespace to the Autoscaler one, or in *all* namespaces depending on your requirements.
 
-A simpler alternative exists if your controller has an explicit ownership relation using [owner references](https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/#owner-references-in-object-specifications) with the resources it controls - in this case you can simply use the `owns` method without needing to provide a function that knows how to get the owner key from the owned resource:
+A simpler alternative exists if your controller has an explicit ownership relation using [owner references](https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/#owner-references-in-object-specifications) with the resources it controls - in this case you can simply use the `owns` method without needing to provide a function that knows how to get the owner `NamespaceName` from the owned resource:
 
 ```scala
 val controller = ControllerBuilder[KronJob](manager)
