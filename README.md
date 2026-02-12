@@ -133,7 +133,7 @@ In this case this ensures that if (for example) some pods are lost or fail due t
 
 In general watching owned/controlled resources is usually necessary to ensure any changes in their status are detected and reconciled. 
 
-Also you can see that you can place a watch on relevant resources in the *same* namespace or a *different* namespace to the Autoscaler one, or in *all* namespaces depending on your requirements.
+You can place a watch on relevant resources in the *same* namespace or a *different* namespace to the Autoscaler one, or in *all* namespaces (using `watchInAllNamespaces`) depending on your requirements.
 
 A simpler alternative exists if your controller has an explicit ownership relation using [owner references](https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/#owner-references-in-object-specifications) with the resources it controls - in this case you can simply use the `owns` method without needing to provide a function that knows how to get the owner `NamespaceName` from the owned resource:
 
