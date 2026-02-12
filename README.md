@@ -82,12 +82,11 @@ val reconciler = new Reconciler[Autoscaler] {
                 .andThen { _ => recorder.normal("REPLICA_DELETED", selectedPodName) }
             } else if (actualCurrentReplicas < desiredReplicas) {
               // build a new replica (pod) 
-              val newPod = buildReplica(autoscaler.spec.targetNamespace, autoscaler.spec.image)
+              val newReplica: Pod = buildReplica(autoscaler.spec.targetNamespace, autoscaler.spec.image)
                 .addLabel(OwnerLabel -> NamespacedName(autoscaler.namespace, autoscaler.name))
               k8s.usingNamespace(autoscaler.spec.targetNamespace)
-                .create(newPod)
-                .addLabel(OwnerLabel -> NamespacedName(autoscaler.namespace, autoscaler.name))
-                .andThen { _ => recorder.normal("REPLICA_CREATED", newPod.name) }
+                .create(newReplica)
+                .andThen { _ => recorder.normal("REPLICA_CREATED", newReplica.name) }
             } else {
               Future.successful()
             }
