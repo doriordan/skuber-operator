@@ -144,7 +144,7 @@ val controller = ControllerBuilder[KronJob](manager)
     .withConcurrency(1)
     .build()
 ```
-
+In the case of owner references, the owner is constrained to be in the same namespace as the owned resource so we don't need the same namespace flexibility as the more generic watch methods.
 
 See the [examples](examples/src/main/scala/skuber/examples/kronjob) subproject for a more complex operator that implements CronJob functionality for scheduling and controlling Kubernetes Jobs.
 
