@@ -67,15 +67,15 @@ val reconciler = new Reconciler[Autoscaler] {
           .listCachedInNamespace[Pod](autoscaler.spec.targetNamespace)
           .filter(_.metadata.labels.get(OwnerLabel).contains(autoscalerId.toString))
         val isAvailable p: Pod => ... // return true if pod phase is running or pending
-        val availableReplicaCount = ownedReplicas.filter(isAvailable).size
+        val actualAvailableReplicas = ownedReplicas.filter(isAvailable).size
         
         val desiredReplicas = autoscaler.spec.desiredReplicas
         // get the underlying Skuber client for updating managed resources if necessary
         val k8s = ctx.client
-        val updateStatusIfNecessary = if (pendingOrRunningReplicas != currentStatusReplicas) {
+        val updateStatusIfNecessary = if (actualAvailableReplicas != currentStatusReplicas) {
           // update Autoscaler status to reflect real count
           val currentStatus = autoscaler.status.getOrElse(Autoscaler.Status())
-          val newStatus = currentStatus.copy(availableReplicas = pendingOrRunningReplicas)
+          val newStatus = currentStatus.copy(availableReplicas = actualAvailableReplicas)
           val updated = autoscaler.copy(status = Some(newStatus))
           k8s.usingNamespace(autoscaler.metadata.namespace).updateStatus(updated)
         } else {
