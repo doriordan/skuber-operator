@@ -2,7 +2,7 @@ package skuber.operator.reconciler
 
 import scala.concurrent.Future
 import play.api.libs.json.Format
-import skuber.model.{ObjectResource, ResourceDefinition}
+import skuber.model.{LabelSelector, ObjectResource, ResourceDefinition}
 import skuber.pekkoclient.PekkoKubernetesClient
 import skuber.operator.cache.SharedCache
 import skuber.operator.event.EventRecorder
@@ -58,3 +58,32 @@ trait ReconcileContext[R <: ObjectResource]:
   def getRelatedInNamespace[O <: ObjectResource](name: String, namespace: String)(
     using rd: ResourceDefinition[O], fmt: Format[O]
   ): Future[Option[O]]
+
+  /**
+   * Get all cached resources of a type that are owned by the primary resource.
+   * Uses the owner reference UID for matching. Synchronous cache read.
+   */
+  def getOwned[O <: ObjectResource]()(
+    using rd: ResourceDefinition[O], fmt: Format[O]
+  ): List[O]
+
+  /**
+   * List all cached resources of a type. Synchronous cache read.
+   */
+  def listCached[O <: ObjectResource]()(
+    using rd: ResourceDefinition[O], fmt: Format[O]
+  ): List[O]
+
+  /**
+   * List cached resources of a type in a specific namespace. Synchronous cache read.
+   */
+  def listCachedInNamespace[O <: ObjectResource](namespace: String)(
+    using rd: ResourceDefinition[O], fmt: Format[O]
+  ): List[O]
+
+  /**
+   * List cached resources of a type matching a label selector. Synchronous cache read.
+   */
+  def listCached[O <: ObjectResource](selector: LabelSelector)(
+    using rd: ResourceDefinition[O], fmt: Format[O]
+  ): List[O]

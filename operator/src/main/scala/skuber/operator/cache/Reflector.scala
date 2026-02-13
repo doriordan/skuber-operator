@@ -3,8 +3,8 @@ package skuber.operator.cache
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.stream.scaladsl.{Keep, RestartSource, Sink}
 import org.apache.pekko.stream.{KillSwitch, KillSwitches, Materializer, RestartSettings}
-import play.api.libs.json.Format
-import skuber.api.client.{EventType, WatchEvent}
+import play.api.libs.json.{Format, Json}
+import skuber.api.client.{EventType, Status, WatchEvent, WatchParameters}
 import skuber.json.format.ListResourceFormat
 import skuber.model.{ListResource, ObjectResource, ResourceDefinition}
 import skuber.pekkoclient.PekkoKubernetesClient
@@ -88,6 +88,22 @@ class Reflector[R <: ObjectResource](
   @volatile private var lastResourceVersion: Option[String] = None
   private val startedPromise = Promise[Unit]()
 
+  private def handleWatchError(errorJson: String): Unit =
+    import skuber.json.format.apiobj.statusReads
+    val status = Json.parse(errorJson).asOpt[Status]
+    val code = status.flatMap(_.code)
+    val message = status.flatMap(_.message).getOrElse("unknown")
+    code match
+      case Some(410) =>
+        // generally indicates we need to clear cache and resync with cluster -
+        // the exception thrown here will  cause the stream to fail and be restarted, which
+        // achieves this goal
+        val msg = s"Watch expired for ${rd.spec.names.kind}: $message"
+        log.warn(msg)
+        throw new WatchExpiredException(msg)
+      case _ =>
+        log.warn(s"Watch error for ${rd.spec.names.kind} (code=$code): $message")
+
   /**
    * Start the reflector.
    * Returns when initial list is complete and watch is running.
@@ -155,7 +171,10 @@ class Reflector[R <: ObjectResource](
 
           // Start watching from this version
           log.debug(s"Starting watch from resourceVersion=$rv")
-          watcher.watchStartingFromVersion(rv)
+          watcher.watchWithParameters(WatchParameters(
+            resourceVersion = Some(rv),
+            errorHandler = Some(handleWatchError)
+          ))
         }
       }.mapMaterializedValue(_ => org.apache.pekko.NotUsed)
     }
@@ -196,17 +215,26 @@ class Reflector[R <: ObjectResource](
       // Clear cache on restart - we'll rebuild from streamed events
       cache.replace(Nil)
 
-      // Use watchWithInitialEvents for streaming list
-      val eventSource = namespace match
+      // Use watchWithParameters with sendInitialEvents for streaming list
+      namespace match
         case Some(ns) =>
-          // For namespaced watch, get watcher from namespace-scoped client
-          // The implementation returns PekkoKubernetesClient, so this cast is safe
           val nsClient = client.usingNamespace(ns).asInstanceOf[PekkoKubernetesClient]
-          nsClient.getWatcher[R].watchWithInitialEvents()
+          nsClient.getWatcher[R].watchWithParameters(WatchParameters(
+            resourceVersion = Some(""),
+            sendInitialEvents = true,
+            allowWatchBookmarks = true,
+            resourceVersionMatch = Some("NotOlderThan"),
+            errorHandler = Some(handleWatchError)
+          ))
         case None =>
-          client.getWatcher[R].watchClusterWithInitialEvents()
-
-      eventSource
+          client.getWatcher[R].watchWithParameters(WatchParameters(
+            clusterScope = true,
+            resourceVersion = Some(""),
+            sendInitialEvents = true,
+            allowWatchBookmarks = true,
+            resourceVersionMatch = Some("NotOlderThan"),
+            errorHandler = Some(handleWatchError)
+          ))
     }
 
     val (ks, done) = watchSource
@@ -259,7 +287,4 @@ class Reflector[R <: ObjectResource](
         else
           log.debug(s"BOOKMARK for ${rd.spec.names.kind} at rv=$rv")
 
-      case EventType.ERROR =>
-        log.warn(s"ERROR event for ${event._object.metadata.name}")
-        // Error events typically indicate we need to re-list
-        // The RestartSource will handle this
+private[cache] class WatchExpiredException(message: String) extends RuntimeException(message)

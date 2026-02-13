@@ -76,7 +76,10 @@ object KronJobResource extends CustomResourceDef[KronJobResource.Spec, KronJobRe
     successfulJobsHistoryLimit: Int = 3,
 
     /** Number of failed jobs to retain (default 1) */
-    failedJobsHistoryLimit: Int = 1
+    failedJobsHistoryLimit: Int = 1,
+
+    /** If set, completed jobs are deleted after this many seconds since completion */
+    completedJobsExpirySeconds: Option[Long] = None
   )
 
   /**

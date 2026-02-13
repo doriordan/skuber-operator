@@ -2,8 +2,8 @@ package skuber.examples.autoscaler
 
 import org.apache.pekko.actor.ActorSystem
 import skuber.api.client.RequestLoggingContext
-import skuber.model.{ListResource, Pod}
-import skuber.json.format.{podFormat, podListFmt, ListResourceFormat}
+import skuber.model.Pod
+import skuber.json.format.podFormat
 import skuber.operator.reconciler.*
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -57,7 +57,7 @@ class AutoscalerReconciler(using system: ActorSystem) extends Reconciler[Autosca
       // For this example, we just log what would happen
       _ = if desiredReplicas != currentReplicas then
         log.info(s"Scaling needed: current=$currentReplicas, desired=$desiredReplicas")
-        // In a real operator, you'd create a Deployment or ReplicaSet,
+        // In a real operator, you'd create a Deploymcent or ReplicaSet,
         // or directly manage Pods here
 
     yield
@@ -65,7 +65,7 @@ class AutoscalerReconciler(using system: ActorSystem) extends Reconciler[Autosca
       ReconcileResult.RequeueAfter(30.seconds, "Periodic metrics check")
 
   /**
-   * List Pods matching the Autoscaler's selector labels.
+   * List Pods matching the Autoscaler's selector labels (from cache).
    */
   private def listMatchingPods(
     autoscaler: Autoscaler,
@@ -74,15 +74,13 @@ class AutoscalerReconciler(using system: ActorSystem) extends Reconciler[Autosca
     val ns = autoscaler.metadata.namespace
     val selector = autoscaler.spec.selector
 
-    // List all pods in namespace and filter by selector
-    // In production, you'd use a label selector query
-    ctx.client.usingNamespace(ns).list[ListResource[Pod]]().map { podList =>
-      podList.items.filter { pod =>
+    Future.successful(
+      ctx.listCachedInNamespace[Pod](ns).filter { pod =>
         selector.forall { case (key, value) =>
           pod.metadata.labels.get(key).contains(value)
         }
       }
-    }
+    )
 
   /**
    * Check if a Pod is running.

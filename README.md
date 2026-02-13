@@ -40,7 +40,7 @@ It builds on the established [Skuber](https://github.com/doriordan/skuber) libra
 
 *Note* The status of this project is currently pre-release so to play around with building an operator, it is probably best to clone this repo and create a subproject locally for your use case, similar to the 'examples' subproject. The aim is to create an initial release quite soon and update docs accordingly.
 
-The following is a very simple example of building an operator (more a controller really) - an Autoscaler that maintains a specified number of replicas (in this case pods) that a user can scale up or down by simply changing the spec on the custom resource.
+The following is a simplified example of building an operator (more a controller really) - an Autoscaler that maintains a specified number of replicas (in this case pods) that a user can scale up or down by simply changing the spec on the custom resource.
 The steps to create the operator are:
 
 Step 1: Define the Autoscaler custom resource type as above. 
@@ -54,53 +54,55 @@ val reconciler = new Reconciler[Autoscaler] {
         // get an event recorder that can be used to publish controller events to Kubernetes that can
         // later be examined using e.g. `kubectl events`
         val recorder = ctx.eventRecorder
-        // get the underlying Skuber client for accessing managed resources
-        val k8s = ctx.client
         val currentStatusReplicas = autoscaler.status.map(_.availableReplicas).getOrElse(0)
-        k8s.usingNamespace(autoscaler.spec.targetNamespace)
-          .list[PodList]()
-          .map { // ...  count pods in the returned pod list that are either Pending or Running as available }
-          .flatMap { pendingOrRunningReplicas =>
-            val desiredReplicas = autoscaler.spec.desiredReplicas
-  
-            val updateStatusIfNecessary = if (pendingOrRunningReplicas != currentStatusReplicas) {
-              // update Autoscaler status to reflect real count
-              val currentStatus = autoscaler.status.getOrElse(Autoscaler.Status())
-              val newStatus = currentStatus.copy(availableReplicas = pendingOrRunningReplicas)
-              val updated = autoscaler.copy(status = Some(newStatus))
-              k8s.usingNamespace(autoscaler.metadata.namespace)
-                .updateStatus(updated)
-            } else {
-              Future.successful()  // no status update needed
-            }
-            // now add or remove a new replica if desired != actual replicas
-            val addOrRemoveReplicaIfNecessary = if (actualCurrentReplicas > desiredReplicas) {
-              // select a pod for deletion and delete it
-              val selectedPodName = ...
-              k8s.usingNamespace(autoscaler.spec.targetNamespace)
-                .delete(selectedPodName)
-                .andThen { _ => recorder.normal("REPLICA_DELETED", selectedPodName) }
-            } else if (actualCurrentReplicas < desiredReplicas) {
-              // build a new replica (pod) 
-              val newReplica: Pod = buildReplica(autoscaler.spec.targetNamespace, autoscaler.spec.image)
-                .addLabel(OwnerLabel -> NamespacedName(autoscaler.namespace, autoscaler.name))
-              k8s.usingNamespace(autoscaler.spec.targetNamespace)
-                .create(newReplica)
-                .andThen { _ => recorder.normal("REPLICA_CREATED", newReplica.name) }
-            } else {
-              Future.successful()
-            }
-            for {
-              _ <- updateStatusIfNecessary
-              _ <- addOrRemoveReplicaIfNecessary
-            } yield ReconcileResult.Done
-          }
+        
+        val autoscalerId = NamespacedName(autoscaler.namespace, autoscaler.name)
+        val OwnerLabel = "owner-autoscaler"
+        // retrieve the locally cached pod list and count the available replicas
+        val ownedReplicas = ctx
+          .listCachedInNamespace[Pod](autoscaler.spec.targetNamespace)
+          .filter(_.metadata.labels.get(OwnerLabel).contains(autoscalerId.toString))
+        val isAvailable p: Pod => ... // return true if pod phase is running or pending
+        val availableReplicaCount = ownedReplicas.filter(isAvailable).size
+        
+        val desiredReplicas = autoscaler.spec.desiredReplicas
+        // get the underlying Skuber client for updating managed resources if necessary
+        val k8s = ctx.client
+        val updateStatusIfNecessary = if (pendingOrRunningReplicas != currentStatusReplicas) {
+          // update Autoscaler status to reflect real count
+          val currentStatus = autoscaler.status.getOrElse(Autoscaler.Status())
+          val newStatus = currentStatus.copy(availableReplicas = pendingOrRunningReplicas)
+          val updated = autoscaler.copy(status = Some(newStatus))
+          k8s.usingNamespace(autoscaler.metadata.namespace).updateStatus(updated)
+        } else {
+          Future.successful()  // no status update needed
         }
+        // now add or remove a new replica if desired != actual replicas
+        val addOrRemoveReplicaIfNecessary = if (actualCurrentReplicas > desiredReplicas) {
+          // select a pod for deletion and delete it
+          val selectedPodName = ...
+          k8s.usingNamespace(autoscaler.spec.targetNamespace)
+            .delete(selectedPodName)
+            .andThen { _ => recorder.normal("REPLICA_DELETED", selectedPodName) }
+        } else if (actualCurrentReplicas < desiredReplicas) {
+          // build a new replica (pod) 
+          val newReplica: Pod = buildReplica(autoscaler.spec.targetNamespace, autoscaler.spec.image)
+            .addLabel(OwnerLabel -> autoscalerId))
+          k8s.usingNamespace(autoscaler.spec.targetNamespace)
+            .create(newReplica)
+            .andThen { _ => recorder.normal("REPLICA_CREATED", newReplica.name) }
+        } else {
+          Future.successful()
+        }
+        for {
+          _ <- updateStatusIfNecessary
+          _ <- addOrRemoveReplicaIfNecessary
+        } yield ReconcileResult.Done
       }
 }  
 ```
-The above reconciler carries out some simple steps to drive the actual state of the resources it controls to the desired state as specified in the Autoscaler resource spec:
-- first check if the Autoscaler status reflects actual status (replica count) on the cluster, updating if not
+The above reconciler carries out some basic steps to drive the actual state of the resources it controls to the desired state as specified in the Autoscaler resource spec:
+- first check if the Autoscaler status reflects actual status (replica count) on the cluster, updating if not. Because the managed replicas are watched by the controller (see Step 3), the current pod list is in the local cache so it does not have to fetch the replica list from the cluster each time.
 - next check if the actual replica count is the same as the desired replica count - if not, it either creates or deletes a replica (pod) as required
 - it also produces events which Kubernetes stores and returns to users when requested.
 

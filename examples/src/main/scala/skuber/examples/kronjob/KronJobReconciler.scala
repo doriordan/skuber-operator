@@ -1,15 +1,13 @@
 package skuber.examples.kronjob
 
 import org.apache.pekko.actor.ActorSystem
-import play.api.libs.json.Format
 import skuber.api.client.RequestLoggingContext
-import skuber.json.batch.format.{jobFormat, jobListFmt}
-import skuber.json.format.ListResourceFormat
-import skuber.model.{Container, ListResource, ObjectMeta, ObjectReference, OwnerReference, Pod, ResourceDefinition, RestartPolicy}
-import skuber.model.batch.{Job, JobTemplate}
+import skuber.json.batch.format.jobFormat
+import skuber.model.{Container, ObjectMeta, ObjectReference, OwnerReference, Pod, RestartPolicy}
+import skuber.model.batch.Job
 import skuber.operator.reconciler.*
 
-import java.time.{Instant, ZoneId, ZonedDateTime}
+import java.time.{Instant, ZonedDateTime}
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.*
 
@@ -69,8 +67,18 @@ class KronJobReconciler(using system: ActorSystem) extends Reconciler[KronJob]:
       (activeJobs, successfulJobs, failedJobs) = categorizeJobs(allJobs)
       _ = log.info(s"Job status: ${activeJobs.size} active, ${successfulJobs.size} successful, ${failedJobs.size} failed")
 
-      // Step 3: Clean up old jobs based on history limits
-      _ <- cleanupOldJobs(cronJob, successfulJobs, failedJobs, ctx)
+      // Step 3a: Delete expired completed jobs
+      _ <- deleteExpiredJobs(cronJob, successfulJobs ++ failedJobs, ctx)
+
+      // Refresh after expiry deletions so history-limit cleanup works on current state
+      remainingJobs = if cronJob.spec.completedJobsExpirySeconds.isDefined then
+        ctx.getOwned[Job]()
+      else
+        allJobs
+      (_, remainingSuccessful, remainingFailed) = categorizeJobs(remainingJobs)
+
+      // Step 3b: Clean up old jobs based on history limits
+      _ <- cleanupOldJobs(cronJob, remainingSuccessful, remainingFailed, ctx)
 
       // Update status with current active jobs
       _ <- updateStatus(cronJob, activeJobs, ctx)
@@ -86,19 +94,10 @@ class KronJobReconciler(using system: ActorSystem) extends Reconciler[KronJob]:
     yield result
 
   /**
-   * List all Jobs owned by this CronJob.
+   * List all Jobs owned by this CronJob (from cache).
    */
   private def listChildJobs(cronJob: KronJob, ctx: ReconcileContext[KronJob]): Future[List[Job]] =
-    val ns = cronJob.metadata.namespace
-    ctx.client.usingNamespace(ns).list[ListResource[Job]]().map { jobList =>
-      jobList.items.filter { job =>
-        job.metadata.ownerReferences.exists { ref =>
-          ref.kind == "CronJob" &&
-          ref.name == cronJob.name &&
-          ref.uid == cronJob.metadata.uid
-        }
-      }
-    }
+    Future.successful(ctx.getOwned[Job]())
 
   /**
    * Categorize jobs into active, successful, and failed.
@@ -117,6 +116,32 @@ class KronJobReconciler(using system: ActorSystem) extends Reconciler[KronJob]:
 
   private def isJobFailed(job: Job): Boolean =
     job.status.flatMap(_.failed).getOrElse(0) > 0
+
+  /**
+   * Delete completed jobs that have exceeded the expiry time.
+   */
+  private def deleteExpiredJobs(
+    kronJob: KronJob,
+    completedJobs: List[Job],
+    ctx: ReconcileContext[KronJob]
+  ): Future[Unit] =
+    kronJob.spec.completedJobsExpirySeconds match
+      case None => Future.successful(())
+      case Some(expirySeconds) =>
+        val log = ctx.log
+        val now = Instant.now()
+        val expired = completedJobs.filter { job =>
+          job.status.flatMap(_.completionTime).exists { completionTime =>
+            java.time.Duration.between(completionTime.toInstant, now).getSeconds >= expirySeconds
+          }
+        }
+        if expired.nonEmpty then
+          log.info(s"Deleting ${expired.size} expired jobs (expiry: ${expirySeconds}s)")
+        Future.traverse(expired) { job =>
+          log.info(s"Deleting expired job: ${job.name}")
+          ctx.client.usingNamespace(kronJob.metadata.namespace).delete[Job](job.name)
+            .recover { case e => log.warn(s"Failed to delete expired job ${job.name}: ${e.getMessage}") }
+        }.map(_ => ())
 
   /**
    * Clean up old jobs based on history limits.
@@ -166,7 +191,7 @@ class KronJobReconciler(using system: ActorSystem) extends Reconciler[KronJob]:
     val currentStatus = kronJob.status.getOrElse(KronJobResource.Status())
     val newStatus = currentStatus.copy(active = activeRefs)
 
-    if kronJob.status.map(_.active) != Some(activeRefs) then
+    if !kronJob.status.map(_.active).contains(activeRefs) then
       val updated = kronJob.copy(status = Some(newStatus))
       ctx.client.usingNamespace(kronJob.metadata.namespace).updateStatus(updated).map(_ => ())
     else
@@ -221,6 +246,10 @@ class KronJobReconciler(using system: ActorSystem) extends Reconciler[KronJob]:
             // Handle concurrency policy
             handleConcurrency(kronJob, scheduled, activeJobs, schedule, now, ctx)
 
+  private def deleteJob(ctx: ReconcileContext[KronJob], kj: KronJob, job: Job) =
+    ctx.client.usingNamespace(kj.metadata.namespace).delete[Job](job.name)
+        .recover { case e => ctx.log.warn(s"Failed to delete job ${job.name}: ${e.getMessage}") }
+        
   /**
    * Handle concurrency policy and create job if appropriate.
    */

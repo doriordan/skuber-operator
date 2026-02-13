@@ -6,6 +6,7 @@ import skuber.model.{LabelSelector, ObjectResource}
 import skuber.operator.reconciler.NamespacedName
 
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantReadWriteLock
 import scala.collection.concurrent.TrieMap
 import scala.jdk.CollectionConverters.*
 
@@ -35,6 +36,21 @@ class InMemoryResourceCache[R <: ObjectResource]()(using mat: Materializer) exte
     .toMat(BroadcastHub.sink(bufferSize = 256))(Keep.both)
     .run()
 
+  // Some methods available to clients of this cache either mutate or read multiple values (store, indexes etc.)
+  // - this read/write lock wraps such methods to ensure atomicity so clients don't have to worry about inconsistent
+  // results
+  private val lock = new ReentrantReadWriteLock()
+
+  private inline def withReadLock[A](body: => A): A =
+    lock.readLock().lock()
+    try body
+    finally lock.readLock().unlock()
+
+  private inline def withWriteLock[A](body: => A): A =
+    lock.writeLock().lock()
+    try body
+    finally lock.writeLock().unlock()
+
   def hasSynced: Boolean = synced
 
   def markSynced(): Unit =
@@ -48,37 +64,43 @@ class InMemoryResourceCache[R <: ObjectResource]()(using mat: Materializer) exte
   def get(key: NamespacedName): Option[R] =
     store.get(key)
 
-  def list(): List[R] =
+  def list(): List[R] = withReadLock {
     store.values.toList
+  }
 
-  def list(selector: LabelSelector): List[R] =
+  def list(selector: LabelSelector): List[R] = withReadLock {
     store.values.filter(matchesSelector(_, selector)).toList
+  }
 
-  def listInNamespace(namespace: String): List[R] =
+  def listInNamespace(namespace: String): List[R] = withReadLock {
     store.values.filter(_.metadata.namespace == namespace).toList
+  }
 
   def events: Source[CacheEvent[R], ?] = eventSource
 
-  def addIndex(name: String, indexer: R => List[String]): Unit =
+  def addIndex(name: String, indexer: R => List[String]): Unit = withWriteLock {
     indexers.put(name, indexer)
     indexes.put(name, TrieMap.empty)
     // Rebuild index for existing resources
     store.values.foreach(r => updateIndex(name, indexer, r, None))
+  }
 
-  def byIndex(indexName: String, value: String): List[R] =
+  def byIndex(indexName: String, value: String): List[R] = withReadLock {
     indexes.get(indexName).flatMap(_.get(value)) match
       case Some(keys) => keys.toList.flatMap(store.get)
       case None => Nil
+  }
 
-  def getOwnedBy(ownerUid: String): List[R] =
+  def getOwnedBy(ownerUid: String): List[R] = withReadLock {
     ownerIndex.get(ownerUid) match
       case Some(keys) => keys.toList.flatMap(store.get)
       case None => Nil
+  }
 
   /**
    * Add a resource to the cache.
    */
-  def add(resource: R): Unit =
+  def add(resource: R): Unit = withWriteLock {
     val key = NamespacedName(resource)
     val existing = store.put(key, resource)
     updateAllIndexes(resource, existing)
@@ -86,11 +108,12 @@ class InMemoryResourceCache[R <: ObjectResource]()(using mat: Materializer) exte
     existing match
       case Some(old) => eventQueue.offer(CacheEvent.Updated(old, resource))
       case None => eventQueue.offer(CacheEvent.Added(resource))
+  }
 
   /**
    * Update a resource in the cache.
    */
-  def update(resource: R): Unit =
+  def update(resource: R): Unit = withWriteLock {
     val key = NamespacedName(resource)
     val existing = store.put(key, resource)
     updateAllIndexes(resource, existing)
@@ -98,23 +121,25 @@ class InMemoryResourceCache[R <: ObjectResource]()(using mat: Materializer) exte
     existing match
       case Some(old) => eventQueue.offer(CacheEvent.Updated(old, resource))
       case None => eventQueue.offer(CacheEvent.Added(resource))
+  }
 
   /**
    * Delete a resource from the cache.
    */
-  def delete(resource: R): Unit =
+  def delete(resource: R): Unit = withWriteLock {
     val key = NamespacedName(resource)
     store.remove(key).foreach { old =>
       removeFromAllIndexes(old)
       removeFromOwnerIndex(old)
       eventQueue.offer(CacheEvent.Deleted(old))
     }
+  }
 
   /**
    * Replace all resources in the cache.
    * Used during initial list or resync.
    */
-  def replace(resources: List[R]): Unit =
+  def replace(resources: List[R]): Unit = withWriteLock {
     val newKeys = resources.map(NamespacedName(_)).toSet
     val oldKeys = store.keySet.toSet
 
@@ -127,8 +152,9 @@ class InMemoryResourceCache[R <: ObjectResource]()(using mat: Materializer) exte
       }
     }
 
-    // Add or update resources
+    // Add or update resources (write lock is reentrant so add() can re-acquire)
     resources.foreach(add)
+  }
 
   private def matchesSelector(resource: R, selector: LabelSelector): Boolean =
     val labels = resource.metadata.labels

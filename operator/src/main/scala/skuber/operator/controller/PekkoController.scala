@@ -5,7 +5,7 @@ import org.apache.pekko.stream.scaladsl.{BroadcastHub, Keep, Sink, Source}
 import org.apache.pekko.stream.{KillSwitch, KillSwitches, Materializer}
 import play.api.libs.json.Format
 import skuber.api.client.EventType
-import skuber.model.{ObjectResource, ResourceDefinition}
+import skuber.model.{LabelSelector, ObjectResource, ResourceDefinition}
 import skuber.operator.cache.{CacheEvent, ResourceCache}
 import skuber.operator.event.EventRecorder
 import skuber.operator.reconciler.*
@@ -269,3 +269,23 @@ private class PekkoReconcileContext[R <: ObjectResource](
     else
       // Fall back to API
       client.usingNamespace(namespace).getOption[O](name)
+
+  def getOwned[O <: ObjectResource]()(
+    using ord: ResourceDefinition[O], fmt: Format[O]
+  ): List[O] =
+    cache.forResource[O].getOwnedBy(resource.metadata.uid)
+
+  def listCached[O <: ObjectResource]()(
+    using ord: ResourceDefinition[O], fmt: Format[O]
+  ): List[O] =
+    cache.forResource[O].list()
+
+  def listCachedInNamespace[O <: ObjectResource](namespace: String)(
+    using ord: ResourceDefinition[O], fmt: Format[O]
+  ): List[O] =
+    cache.forResource[O].listInNamespace(namespace)
+
+  def listCached[O <: ObjectResource](selector: LabelSelector)(
+    using ord: ResourceDefinition[O], fmt: Format[O]
+  ): List[O] =
+    cache.forResource[O].list(selector)

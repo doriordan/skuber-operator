@@ -20,3 +20,6 @@ Thumbs.db
 
 # Credentials
 .credentials
+
+# AI
+.claude
