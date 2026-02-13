@@ -66,7 +66,7 @@ val reconciler = new Reconciler[Autoscaler] {
         val ownedReplicas = ctx
           .listCachedInNamespace[Pod](autoscaler.spec.targetNamespace)
           .filter(_.metadata.labels.get(OwnerLabel).contains(autoscalerId.toString))
-        val isAvailable p: Pod => ... // return true if pod phase is running or pending
+        val isAvailable p: Pod => ... // return true if pod phase is running or pending (is available or expected to soon be available)
         val actualAvailableReplicas = ownedReplicas.filter(isAvailable).size
         
         val desiredReplicas = autoscaler.spec.desiredReplicas
@@ -81,14 +81,16 @@ val reconciler = new Reconciler[Autoscaler] {
         } else {
           Future.successful()  // no status update needed
         }
-        // now add or remove a new replica if desired != actual replicas
-        val addOrRemoveReplicaIfNecessary = if (actualCurrentReplicas > desiredReplicas) {
+        // now add or remove a new replica if desired != actual replicas - this will gradually 
+        // converge the actual to the desired state as pods coming up and down on the cluster 
+        // trigger further reconciliations
+        val addOrRemoveReplicaIfNecessary = if (actualAvailableReplicas > desiredReplicas) {
           // select a pod for deletion and delete it
           val selectedPodName = ...
           k8s.usingNamespace(autoscaler.spec.targetNamespace)
             .delete(selectedPodName)
             .andThen { _ => recorder.normal("REPLICA_DELETED", selectedPodName) }
-        } else if (actualCurrentReplicas < desiredReplicas) {
+        } else if (actualAvailableReplicas < desiredReplicas) {
           // build a new replica (pod) 
           val newReplica: Pod = buildReplica(autoscaler.spec.targetNamespace, autoscaler.spec.image)
             .addLabel(OwnerLabel -> autoscalerId))
