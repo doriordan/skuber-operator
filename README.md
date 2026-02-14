@@ -1,8 +1,19 @@
 # Skuber Operator
 
-*This project is in an early, experimental phase.*
+*This project is at an early pre-release stage and is being constantly updated, so check back regularly for updates*
 
-An SDK for building Kubernetes Operators in Scala.
+An SDK for building Kubernetes operators and controllers in Scala.
+
+Key features:
+- declare boilerplate-free Kubernetes custom resources using Scala case classes and macro annotations
+- create operators in Scala that support the [Operator Pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) and are built on controllers
+- the design of controllers follows established best practices in the Kubernetes ecosystem
+- application defines reconcilers that drive actual state towards desired state
+- the controller takes care of monitoring the cluster and triggering reconciliation when required
+- a reflector continually keeps a local cache of monitored resources in sync with cluster using list/watch functionality
+- leverages the long established [Skuber](https://github.com/doriordan/skuber) library for underlying Kubernetes client functionality including event handling
+
+## Custom Resources
 
 The SDK enables developers to easily define Kubernetes custom resources as annotated case classes  - a simple example:
 ```scala
@@ -24,6 +35,8 @@ type Autoscaler = Autoscaler.Resource
 ```
 The `@customResource` macro generates all the code needed to use `Autoscaler` as a custom resource type, including creating, updating, retrieving, listing, removing and watching the resources on a cluster.
 The annotated properties group, kind and version uniquely identify this custom resource type to the Kubernetes API, while the Spec and Status nested case classes define the content of the resources.
+
+## Operator Basics: controllers, reconcilers, reflectors and caches
 
 The SDK provides a framework to build controllers and operators based on these user-defined custom resources and the [Operator Pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
 
@@ -47,11 +60,16 @@ The SDK has dependencies on Skuber (`3.1+`) and Pekko for the underlying Kuberne
 The following is a simplified example of building an operator (more a controller really) - an Autoscaler that maintains a specified number of replicas (in this case pods) that a user can scale up or down by simply changing the spec on the custom resource.
 The steps to create the operator are:
 
-#### Step 1: Define the Autoscaler custom resource type as above. 
+#### Step 1: Define the Autoscaler custom resource type 
+
+See the example above.
 
 (This tells your controller everything it needs to know about the custom resource type, but you will also need to define a corresponding [CRD](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#customresourcedefinitions) that describes the same custom resource type to Kubernetes itself - this can be done manually on the cluster or programmatically (see the `AutoscalerCRDFixture` in the integration tests for an example of the latter)
 
-#### Step 2: Implement the reconciliation logic as below:
+#### Step 2: Implement the reconciliation logic
+
+The reconciler is the application logic that converges the state of the resources on the cluster with desired state - so in the case of the Autoscaler operator we want to converge the actual number of controlled replicas to the desired replicas in the spec.
+
 ```scala
 val reconciler = new Reconciler[Autoscaler] {
       def reconcile(autoscaler: Autoscaler, ctx: ReconcileContext[Autoscaler]): Future[ReconcileResult] = {
@@ -107,12 +125,12 @@ val reconciler = new Reconciler[Autoscaler] {
       }
 }  
 ```
-The above reconciler carries out some basic steps to drive the actual state of the resources it controls to the desired state as specified in the Autoscaler resource spec:
+The above reconciler carries out these basic steps:
 - first check if the Autoscaler status reflects actual status (replica count) on the cluster, updating if not. Because the managed replicas are watched by the controller (see Step 3), the current pod list is in the local cache so it does not have to fetch the replica list from the cluster each time.
 - next check if the actual replica count is the same as the desired replica count - if not, it either creates or deletes a replica (pod) as required
 - it also produces events which Kubernetes stores and returns to users when requested.
 
-#### Step 3: Create and start a controller that uses the above reconciler.
+#### Step 3: Create and start the contoller.
 
 ```scala
 
@@ -133,9 +151,9 @@ manager.add(controller)
 
 val startFuture = manager.start()
 ```
-Note the `watchesInNamespaces` method calls above. This ensures that the controller will not just watch the Autoscaler resources but also watch for any changes to "owned" resources (pods in this case) in the specified namespaces. 
+This controller will monitor both the Autoscaler resources and any pods in "groupOneReplicas" and "groupTwoReplicas" namespaces, maintaining up to date copies in its local cache, invoking the reconciler with the owning Autoscaler resource if the state of those resources changes.
 
-The function passed to the watch method identifies the owner custom resource (as an optional `NamespacedName`) from the watched resource, which allows the controller to fetch that specific owner resource from the cache and pass it to to the reconciler, which can then drive any updates needed based on the changes to the owned resources.
+The function passed to the watch methods identifies the owner custom resource (as an optional `NamespacedName`) from the watched resource, which allows the controller to fetch that specific owner resource from the cache and pass it to to the reconciler, which can then drive any updates needed based on the changes to the owned resources.
 
 In this case this ensures that if (for example) some pods are lost or fail due to a cluster node failing or the pod being evicted due to memory pressure, the reconciler will be invoked with the appropriate Autoscaler resource and can bring up replacement pods.
 
