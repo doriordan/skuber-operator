@@ -34,6 +34,7 @@ class PekkoController[R <: ObjectResource](
   private val workQueue = new WorkQueue(workQueueConfig)
 
   @volatile private var running = false
+  @volatile private var starting = false
   @volatile private var killSwitch: Option[KillSwitch] = None
 
   // Outcome stream for monitoring
@@ -50,28 +51,36 @@ class PekkoController[R <: ObjectResource](
 
   def start(): Future[Unit] =
     log.info(s"Starting controller for $kind")
-    running = true
+    if (starting || running)
+      log.warn(s"Controller for $kind already started or running")
+      Future.successful(())
+    starting = true
+    try
+      // Get cache for primary resource
+      val cache = manager.cache.forResource[R]
 
-    // Get cache for primary resource
-    val cache = manager.cache.forResource[R]
+      // Subscribe to primary resource events
+      setupPrimaryWatch(cache)
 
-    // Subscribe to primary resource events
-    setupPrimaryWatch(cache)
+      // Subscribe to owned resource events
+      owns.foreach(setupOwnedWatch)
 
-    // Subscribe to owned resource events
-    owns.foreach(setupOwnedWatch)
+      // Subscribe to watched resource events
+      watches.foreach(setupRelatedWatch)
 
-    // Subscribe to watched resource events
-    watches.foreach(setupRelatedWatch)
+      // Start the reconcile loop
+      startReconcileLoop(cache)
 
-    // Start the reconcile loop
-    startReconcileLoop(cache)
+      running = true
 
-    Future.successful(())
+      Future.successful(())
+    finally
+      starting = false
 
   def stop(): Future[Unit] =
     log.info(s"Stopping controller for $kind")
     running = false
+    starting = false
     workQueue.shutdown()
     killSwitch.foreach(_.shutdown())
     Future.successful(())
@@ -109,29 +118,31 @@ class PekkoController[R <: ObjectResource](
     given Format[O] = watched.fmt
 
     // Determine the namespace scope for this watch
-    val namespaceOverride: Option[String] = watched.namespace match
-      case WatchNamespace.ManagerDefault => None  // Will use manager's forResource which has default ns
-      case WatchNamespace.AllNamespaces => None   // Explicitly all namespaces
-      case WatchNamespace.Specific(ns) => Some(ns)
+    val namespaceOverride: List[String] = watched.namespaces match
+      case WatchNamespaces.ManagerDefault => Nil  // Will use manager's forResource which has default ns
+      case WatchNamespaces.AllNamespaces => Nil  // Explicitly all namespaces
+      case WatchNamespaces.Specific(ns) => ns
 
     // Get cache with appropriate namespace scope
-    val cache = watched.namespace match
-      case WatchNamespace.ManagerDefault =>
-        manager.cache.forResource[O]
-      case WatchNamespace.AllNamespaces =>
-        manager.cache.forResourceInNamespace[O](None)  // None = all namespaces
-      case WatchNamespace.Specific(ns) =>
-        manager.cache.forResourceInNamespace[O](Some(ns))
+    val caches = watched.namespaces match
+      case WatchNamespaces.ManagerDefault =>
+        List(manager.cache.forResource[O])
+      case WatchNamespaces.AllNamespaces =>
+        List(manager.cache.forResourceInNamespace[O](None))  // None = all namespaces
+      case WatchNamespaces.Specific(ns) =>
+        ns.map(n => manager.cache.forResourceInNamespace[O](Some(n)))
 
-    cache.events.runForeach {
-      case CacheEvent.Added(resource) =>
-        watched.mapper(resource).foreach(workQueue.add)
-      case CacheEvent.Updated(_, resource) =>
-        watched.mapper(resource).foreach(workQueue.add)
-      case CacheEvent.Deleted(resource) =>
-        watched.mapper(resource).foreach(workQueue.add)
-      case CacheEvent.Synced =>
-        ()
+    caches.foreach { cache =>
+      cache.events.runForeach {
+        case CacheEvent.Added(resource) =>
+          watched.mapper(resource).foreach(workQueue.add)
+        case CacheEvent.Updated(_, resource) =>
+          watched.mapper(resource).foreach(workQueue.add)
+        case CacheEvent.Deleted(resource) =>
+          watched.mapper(resource).foreach(workQueue.add)
+        case CacheEvent.Synced =>
+          ()
+      }
     }
 
   private def enqueue(resource: R): Unit =

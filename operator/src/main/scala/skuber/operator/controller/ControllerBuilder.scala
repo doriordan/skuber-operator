@@ -56,7 +56,7 @@ class ControllerBuilder[R <: ObjectResource](
    * @param mapper Function to extract the owning R's key from O
    */
   def watches[O <: ObjectResource](
-    namespace: WatchNamespace = WatchNamespace.ManagerDefault
+    namespace: WatchNamespaces = WatchNamespaces.ManagerDefault
   )(mapper: O => Option[NamespacedName])(
     using ord: ResourceDefinition[O], ofmt: Format[O]
   ): this.type =
@@ -73,20 +73,20 @@ class ControllerBuilder[R <: ObjectResource](
   def watchesAllNamespaces[O <: ObjectResource](mapper: O => Option[NamespacedName])(
     using ord: ResourceDefinition[O], ofmt: Format[O]
   ): this.type =
-    watches(WatchNamespace.AllNamespaces)(mapper)
+    watches(WatchNamespaces.AllNamespaces)(mapper)
 
   /**
    * Watch related resources in a specific namespace with custom key extraction.
    * Convenience method equivalent to watches(WatchNamespace.Specific(ns))(mapper).
    *
    * @tparam O The related resource type
-   * @param namespace The namespace to watch
+   * @param namespaces The namespace to watch
    * @param mapper Function to extract the owning R's key from O
    */
-  def watchesInNamespace[O <: ObjectResource](namespace: String)(mapper: O => Option[NamespacedName])(
+  def watchesInNamespaces[O <: ObjectResource](namespaces: List[String])(mapper: O => Option[NamespacedName])(
     using ord: ResourceDefinition[O], ofmt: Format[O]
   ): this.type =
-    watches(WatchNamespace.Specific(namespace))(mapper)
+    watches(WatchNamespaces.Specific(namespaces))(mapper)
 
   /**
    * Set maximum concurrent reconciliations.
@@ -136,5 +136,5 @@ private[controller] case class WatchedResource[O <: ObjectResource](
   rd: ResourceDefinition[O],
   fmt: Format[O],
   mapper: O => Option[NamespacedName],
-  namespace: WatchNamespace
+  namespaces: WatchNamespaces
 )

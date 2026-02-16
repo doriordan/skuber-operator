@@ -8,6 +8,7 @@ import skuber.operator.leaderelection.{LeaderElection, LeaderElectionConfig}
 import skuber.operator.reconciler.OperatorLogger
 import skuber.pekkoclient.PekkoKubernetesClient
 
+import java.util.concurrent.atomic.AtomicReference
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.*
@@ -106,41 +107,56 @@ class PekkoControllerManager(
     config.namespace
   )
 
-  private val controllers = ListBuffer[Controller[?]]()
-  private var leaderElection: Option[LeaderElection] = None
+  private val controllers: AtomicReference[ListBuffer[Controller[?]]] = AtomicReference(ListBuffer())
+  private var leaderElection: AtomicReference[Option[LeaderElection]] = AtomicReference(None)
 
   @volatile private var _isLeader: Boolean = config.leaderElection.isEmpty
   @volatile private var _isRunning: Boolean = false
+  @volatile private var _isStarting: Boolean = false
 
   def isLeader: Boolean = _isLeader
   def isRunning: Boolean = _isRunning
 
   def add[R <: ObjectResource](controller: Controller[R]): Unit =
-    if _isRunning then
+    if _isRunning then {
       throw new IllegalStateException("Cannot add controllers after manager has started")
-    controllers += controller
+    }
+    while
+      val current = controllers.get()
+      val updated = current.appendAll(List(controller))
+      !controllers.compareAndSet(current, updated)
+    do()
 
   def start(): Future[Unit] =
-    log.info("Starting controller manager")
+    if (_isStarting)
+      Future.failed(new Exception("already starting"))
+    if (_isRunning)
+      Future.failed(new Exception("already running"))
 
-    config.leaderElection match
-      case Some(leConfig) =>
-        log.info(s"Leader election enabled with lease ${leConfig.leaseName}")
-        leaderElection = Some(new LeaderElection(client, leConfig))
-        leaderElection.get.run(
-          onStartedLeading = () => startControllersInternal(),
-          onStoppedLeading = () => stopControllersInternal()
-        )
+    _isStarting = true
+    try
+      log.info("Starting controller manager")
 
-      case None =>
-        log.info("Leader election disabled, starting immediately")
-        startControllersInternal()
+      config.leaderElection match
+        case Some(leConfig) =>
+          log.info(s"Leader election enabled with lease ${leConfig.leaseName}")
+          val election = new LeaderElection(client, leConfig)
+          leaderElection.set(Some(election))
+          election.run(
+            onStartedLeading = () => startControllersInternal(),
+            onStoppedLeading = () => stopControllersInternal()
+          )
+
+        case None =>
+          log.info("Leader election disabled, starting immediately")
+          startControllersInternal()
+    finally
+      _isStarting = false
 
   private def startControllersInternal(): Future[Unit] =
     _isLeader = true
-    _isRunning = true
 
-    for
+    val started = for
       // Start cache and wait for initial sync
       _ <- cache.start()
       _ = log.info("Cache started, waiting for sync")
@@ -151,22 +167,24 @@ class PekkoControllerManager(
       _ = log.info("Cache synced")
 
       // Start all controllers
-      _ <- Future.traverse(controllers.toList)(_.start())
-      _ = log.info(s"Started ${controllers.size} controller(s)")
+      _ <- Future.traverse(controllers.get().toList)(_.start())
+      _ = log.info(s"Started ${controllers.get().size} controller(s)")
     yield ()
+
+    started.andThen(_ => _isRunning = true)
 
   private def stopControllersInternal(): Future[Unit] =
     log.info("Stopping controllers")
     _isLeader = false
 
-    Future.traverse(controllers.toList)(_.stop()).map(_ => ())
+    Future.traverse(controllers.get().toList)(_.stop()).map(_ => ())
 
   def stop(): Future[Unit] =
     log.info("Stopping controller manager")
     _isRunning = false
 
     for
-      _ <- leaderElection.map(_.stop()).getOrElse(Future.unit)
+      _ <- leaderElection.get().map(_.stop()).getOrElse(Future.unit)
       _ <- stopControllersInternal()
       _ <- cache.stop()
       _ = log.info("Controller manager stopped")

@@ -5,12 +5,12 @@
 An SDK for building Kubernetes operators and controllers in Scala.
 
 Key features:
-- declare boilerplate-free Kubernetes custom resources using Scala case classes and macro annotations
-- create operators in Scala that support the [Operator Pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) and are built on controllers
-- the design of controllers follows established best practices in the Kubernetes ecosystem
-- application defines reconcilers that drive actual state towards desired state
+- define boilerplate-free Kubernetes custom resources using Scala case classes and macro annotations
+- create operators in Scala that support the [Operator Pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) 
+- the design of the controllers follows established best practices in the Kubernetes ecosystem
+- application defines reconcilers that drive actual state of controlled resources towards desired state
 - the controller takes care of monitoring the cluster and triggering reconciliation when required
-- a reflector continually keeps a local cache of monitored resources in sync with cluster using list/watch functionality
+- a reflector continually keeps a local cache of monitored resources in sync with cluster
 - leverages the long established [Skuber](https://github.com/doriordan/skuber) library for underlying Kubernetes client functionality including event handling
 
 ## Custom Resources
@@ -33,7 +33,7 @@ object Autoscaler extends CustomResourceDef[Autoscaler.Spec, Autoscaler.Status]:
 // OPTIONAL type alias that slightly simplifies generic type parameters
 type Autoscaler = Autoscaler.Resource
 ```
-The `@customResource` macro generates all the code needed to use `Autoscaler` as a custom resource type, including creating, updating, retrieving, listing, removing and watching the resources on a cluster.
+The `@customResource` macro generates all the code needed to use `Autoscaler` as a custom resource type, including the JSON readers and writers that enable creating, updating, retrieving, listing, removing and watching resources of this kind on a cluster.
 The annotated properties group, kind and version uniquely identify this custom resource type to the Kubernetes API, while the Spec and Status nested case classes define the content of the resources.
 
 ## Operator Basics: controllers, reconcilers, reflectors and caches
@@ -43,7 +43,7 @@ The SDK provides a framework to build controllers and operators based on these u
 It broadly follows the well-understood and tested Kubernetes runtime controller/operator design as implemented by [kubebuilder](https://book.kubebuilder.io/introduction.html) amongst others, including:
 - *controller*: manages the main control loop for a particular custom resource type, using the cache/reflector to receive updates and triggering reconciliation
 - *reconciler*: application-defined logic for driving updates to managed resources based on updates to watched resources (reconciliation) 
-- *cache and reflector*: the reflector continually reflects the state of the watched resources into a local cache, by initially retrieving all resources from the cluster and storing them in the cache and then continually watching events for further updates on the cached resources.
+- *cache and reflector*: the reflector continually syncs the state of the relevant resources on the cluster into a local cache, initially by listing then watching them for updates. This enables speedy reconciliation and significantly reduces cluster traffic.
 
 It builds on the established [Skuber](https://github.com/doriordan/skuber) library for its core Kubernetes client functionality, including the list/watch functionality of the reflector. Under the hood it uses [Pekko](https://pekko.apache.org/) streams for event handling, with benefits for managing backpressure, rate-limiting and so on.
 
@@ -57,18 +57,45 @@ The SDK has dependencies on Skuber (`3.1+`) and Pekko for the underlying Kuberne
 
 *The status of this project is currently pre-release so to play around with building an operator, it is probably best to clone this repo and create a subproject locally for your use case, similar to the 'examples' subproject. The aim is to create an initial release quite soon and update docs accordingly.*
 
-The following is a simplified example of building an operator (more a controller really) - an Autoscaler that maintains a specified number of replicas (in this case pods) that a user can scale up or down by simply changing the spec on the custom resource.
+The following is a simplified example of building an operator (more a controller really) - an Autoscaler that maintains a specified number of replicas that a user can scale up or down by simply changing the spec on the custom resource, so it operates really as a simplified replica set controller.
 The steps to create the operator are:
 
 #### Step 1: Define the Autoscaler custom resource type 
 
 See the example above.
 
-(This tells your controller everything it needs to know about the custom resource type, but you will also need to define a corresponding [CRD](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#customresourcedefinitions) that describes the same custom resource type to Kubernetes itself - this can be done manually on the cluster or programmatically (see the `AutoscalerCRDFixture` in the integration tests for an example of the latter)
+This tells your controller everything it needs to know about the custom resource type, but you will also need to define a corresponding [CRD](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#customresourcedefinitions) that describes the same custom resource type to Kubernetes itself. This can be done manually on the cluster or programmatically - see the `AutoscalerCRDFixture` in the integration tests for an example of the latter.
 
-#### Step 2: Implement the reconciliation logic
+#### Step 2: Build the controller
 
-The reconciler is the application logic that converges the state of the resources on the cluster with desired state - so in the case of the Autoscaler operator we want to converge the actual number of controlled replicas to the desired replicas in the spec.
+```scala
+
+val reconciler: Reconciler[Autoscaler] = ??? // see Step 3
+
+val managerConfig = ... // this configures e.g. in which namespace (or all) the operators custom resources exist
+val manager = ControllerManager(managerConfig, k8s)
+
+val OwnerLabel = "..."
+val toOwner = pod: Pod => pod.metadata.labels.get(OwnerLabel).map(NamespacedName.fromString)
+
+val controller = ControllerBuilder[Autoscaler](manager)
+    .withReconciler(reconciler)
+    .watchesInNamespace[Pod]("groupOneReplicas", toOwner)
+    .watchesInNamespace[Pod]("groupTwoReplicas", toOwner)
+    .withConcurrency(1)
+    .build()
+```
+This controller will monitor the Autoscaler custom resources (the *primary* resources) as well as any pods in "groupOneReplicas" and "groupTwoReplicas" namespaces (the *secondary* resources), invoking the reconciler if the state of those resources changes.
+
+This ensure reconciliation is called for any change in the spec of the Autoscaler (for example desired replica count) but also any change in the owned resources (for example a pod is evicted from a node).
+
+The `toOwner` function tells the controller which specific Autoscaler resource (there can be multiple Autoscalers) owns any changed pod, so that the controller can pass it to the reconciler.
+
+You can place a watch in specific namespaces as above, or in *all* namespaces (using `watchInAllNamespaces`) depending on your requirements.
+
+#### Step 3: Implement the reconciliation logic
+
+The reconciler is the application logic that converges the state of the resources on the cluster with desired state - so in the case of the Autoscaler operator we want to converge the actual number of controlled replicas to the desired replica count in the spec.
 
 ```scala
 val reconciler = new Reconciler[Autoscaler] {
@@ -130,38 +157,33 @@ The above reconciler carries out these basic steps:
 - next check if the actual replica count is the same as the desired replica count - if not, it either creates or deletes a replica (pod) as required
 - it also produces events which Kubernetes stores and returns to users when requested.
 
-#### Step 3: Create and start the contoller.
+#### Step 4: Register and start the contoller.
 
 ```scala
-
-val managerConfig = ... // this configures e.g. in which namespace (or all) the operators custom resources exist
-val manager = ControllerManager(managerConfig, k8s)
-
-val OwnerLabel = "..."
-val toOwner = pod: Pod => pod.metadata.labels.get(OwnerLabel).map(NamespacedName.fromString)
-
-val controller = ControllerBuilder[Autoscaler](manager)
-    .withReconciler(reconciler)
-    .watchesInNamespace[Pod]("groupOneReplicas", toOwner)
-    .watchesInNamespace[Pod]("groupTwoReplicas", toOwner)
-    .withConcurrency(1)
-    .build()
 
 manager.add(controller)
 
 val startFuture = manager.start()
 ```
-This controller will monitor both the Autoscaler resources and any pods in "groupOneReplicas" and "groupTwoReplicas" namespaces, maintaining up to date copies in its local cache, invoking the reconciler with the owning Autoscaler resource if the state of those resources changes.
+### Primary, Secondary and Owned Resources
 
-The function passed to the watch methods identifies the owner custom resource (as an optional `NamespacedName`) from the watched resource, which allows the controller to fetch that specific owner resource from the cache and pass it to to the reconciler, which can then drive any updates needed based on the changes to the owned resources.
+Kubernetes controllers commonly manage *Primary Resources* and *Secondary Resources*. A Primary Resource is the main resource that the controller is responsible for, while Secondary Resources are created and managed by the controller to support the Primary Resource.
 
-In this case this ensures that if (for example) some pods are lost or fail due to a cluster node failing or the pod being evicted due to memory pressure, the reconciler will be invoked with the appropriate Autoscaler resource and can bring up replacement pods.
+In the Autoscaler case the Autoscaler custom resources are the primary resources, while the pods (replicas) that it manages are the secondary resources. 
 
-In general watching owned/controlled resources is usually necessary to ensure any changes in their status are detected and reconciled. 
+The controller must know what the secondary resources are so that it can watch them and trigger reconciliation if their status changes. For this purpose it also needs to know which primary resource "owns" the impacted secondary resources so it can pass it to the reconciler.
 
-You can place a watch on relevant resources in the *same* namespace or a *different* namespace to the Autoscaler one, or in *all* namespaces (using `watchInAllNamespaces`) depending on your requirements.
+In the case of the Autoscaler example the `isOwner` user-defined function identifies the owner (as a namespaced name e.g. "default/autoscaler1") from a label on the resources. It is the responsibility of the application to ensure created secondary resources have the correct label applied:
+```scala
+  val autoscalerId = NamespacedName(autoscaler.namespace, autoscaler.name)
+  val OwnerLabel = "owner-autoscaler"
+  val newReplica: Pod = buildReplica(autoscaler.spec.targetNamespace, autoscaler.spec.image)
+      .addLabel(OwnerLabel -> autoscalerId))
+```
 
-A simpler alternative exists if your controller has an explicit ownership relation using [owner references](https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/#owner-references-in-object-specifications) with the resources it controls - in this case you can simply use the `owns` method without needing to provide a function that knows how to get the owner `NamespaceName` from the owned resource, as the operator can automatically identify the owner to pass to the reconciler
+A simpler alternative exists if your controller has an explicit ownership relation using [owner references](https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/#owner-references-in-object-specifications) with the secondary resources it controls - in this case, instead of specifying some `watch...` command you can simply use the `owns` method without needing to provide a function that knows how to get the owner.
+
+In the KronJob example in the [examples](examples/src/main/scala/skuber/examples/kronjob) each job has an owner reference to the KronJob resource that creates and controls it, so we can just use `owns` to watch them: 
 
 ```scala
 val controller = ControllerBuilder[KronJob](manager)
@@ -170,8 +192,31 @@ val controller = ControllerBuilder[KronJob](manager)
     .withConcurrency(1)
     .build()
 ```
-In the case of owner references, the owner is constrained to be in the same namespace as the owned resource so we don't need the same namespace flexibility as the more generic watch methods.
+When any job changes (or is deleted) the controller identifies the owner KronJob from the owner reference(s) on the job and passes it the reconciler.
 
-See the [examples](examples/src/main/scala/skuber/examples/kronjob) subproject for a moderately complex operator example (KronJob - a simplified reimplementation of CronJob in Scala)
+Again it is the responsibility of the application logic to apply the correct owner reference to any created job - in the KronJob example this is handled when building the Job as follows:
+```scala
+Job(
+      metadata = ObjectMeta(
+        name = jobName,
+        namespace = kronJob.metadata.namespace,
+        annotations = Map(ScheduledTimeAnnotation -> scheduledTime.toString),
+        ownerReferences = List(OwnerReference(
+          apiVersion = kronJob.apiVersion,
+          kind = kronJob.kind,
+          name = kronJob.name,
+          uid = kronJob.metadata.uid,
+          controller = Some(true),
+          blockOwnerDeletion = Some(true)
+        ))
+      ),
+      spec = Some(jobSpec)
+    )
+```
 
+There are some additional benefits of using owner references - for example the above will cause Kubernetes to prevent the owner primary resource KronJob being deleted as long as jobs being managed by it exist, which can be useful to maintain consistency.
+
+When owner references are used the owner is constrained to be in the same namespace as the owned resource or be cluster-scoped so we don't need the same namespace flexibility as the more generic `watchInNamespace` controller method.
+
+See [Owners And Dependents](https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/) for more details that can help you decide whether to use owner references in your controllers.
   

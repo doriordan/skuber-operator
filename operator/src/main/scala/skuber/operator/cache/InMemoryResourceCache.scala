@@ -5,10 +5,8 @@ import org.apache.pekko.stream.{Materializer, OverflowStrategy}
 import skuber.model.{LabelSelector, ObjectResource}
 import skuber.operator.reconciler.NamespacedName
 
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import scala.collection.concurrent.TrieMap
-import scala.jdk.CollectionConverters.*
 
 /**
  * Thread-safe in-memory implementation of ResourceCache.
@@ -97,10 +95,7 @@ class InMemoryResourceCache[R <: ObjectResource]()(using mat: Materializer) exte
       case None => Nil
   }
 
-  /**
-   * Add a resource to the cache.
-   */
-  def add(resource: R): Unit = withWriteLock {
+  private def safeUpsert(resource: R): Unit = withWriteLock {
     val key = NamespacedName(resource)
     val existing = store.put(key, resource)
     updateAllIndexes(resource, existing)
@@ -111,16 +106,20 @@ class InMemoryResourceCache[R <: ObjectResource]()(using mat: Materializer) exte
   }
 
   /**
+   * Add a resource to the cache.
+   */
+  def add(resource: R): Unit = safeUpsert(resource)
+  /**
    * Update a resource in the cache.
    */
-  def update(resource: R): Unit = withWriteLock {
-    val key = NamespacedName(resource)
-    val existing = store.put(key, resource)
-    updateAllIndexes(resource, existing)
-    updateOwnerIndex(resource, existing)
-    existing match
-      case Some(old) => eventQueue.offer(CacheEvent.Updated(old, resource))
-      case None => eventQueue.offer(CacheEvent.Added(resource))
+  def update(resource: R): Unit = safeUpsert(resource)
+
+  private def remove(key: NamespacedName): Unit = {
+    store.remove(key).foreach { old =>
+      removeFromAllIndexes(old)
+      removeFromOwnerIndex(old)
+      eventQueue.offer(CacheEvent.Deleted(old))
+    }
   }
 
   /**
@@ -128,11 +127,7 @@ class InMemoryResourceCache[R <: ObjectResource]()(using mat: Materializer) exte
    */
   def delete(resource: R): Unit = withWriteLock {
     val key = NamespacedName(resource)
-    store.remove(key).foreach { old =>
-      removeFromAllIndexes(old)
-      removeFromOwnerIndex(old)
-      eventQueue.offer(CacheEvent.Deleted(old))
-    }
+    remove(key)
   }
 
   /**
@@ -144,13 +139,7 @@ class InMemoryResourceCache[R <: ObjectResource]()(using mat: Materializer) exte
     val oldKeys = store.keySet.toSet
 
     // Remove resources no longer present
-    (oldKeys -- newKeys).foreach { key =>
-      store.remove(key).foreach { old =>
-        removeFromAllIndexes(old)
-        removeFromOwnerIndex(old)
-        eventQueue.offer(CacheEvent.Deleted(old))
-      }
-    }
+    (oldKeys -- newKeys).foreach(remove)
 
     // Add or update resources (write lock is reentrant so add() can re-acquire)
     resources.foreach(add)
@@ -158,20 +147,19 @@ class InMemoryResourceCache[R <: ObjectResource]()(using mat: Materializer) exte
 
   private def matchesSelector(resource: R, selector: LabelSelector): Boolean =
     val labels = resource.metadata.labels
-    selector.requirements.forall { req =>
-      req match
-        case LabelSelector.ExistsRequirement(key) =>
-          labels.contains(key)
-        case LabelSelector.NotExistsRequirement(key) =>
-          !labels.contains(key)
-        case LabelSelector.IsEqualRequirement(key, value) =>
-          labels.get(key).contains(value)
-        case LabelSelector.IsNotEqualRequirement(key, value) =>
-          !labels.get(key).contains(value)
-        case LabelSelector.InRequirement(key, values) =>
-          labels.get(key).exists(values.contains)
-        case LabelSelector.NotInRequirement(key, values) =>
-          !labels.get(key).exists(values.contains)
+    selector.requirements.forall {
+      case LabelSelector.ExistsRequirement(key) =>
+        labels.contains(key)
+      case LabelSelector.NotExistsRequirement(key) =>
+        !labels.contains(key)
+      case LabelSelector.IsEqualRequirement(key, value) =>
+        labels.get(key).contains(value)
+      case LabelSelector.IsNotEqualRequirement(key, value) =>
+        !labels.get(key).contains(value)
+      case LabelSelector.InRequirement(key, values) =>
+        labels.get(key).exists(values.contains)
+      case LabelSelector.NotInRequirement(key, values) =>
+        !labels.get(key).exists(values.contains)
     }
 
   private def updateAllIndexes(resource: R, existing: Option[R]): Unit =

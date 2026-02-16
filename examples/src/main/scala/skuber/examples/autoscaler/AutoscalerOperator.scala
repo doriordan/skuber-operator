@@ -4,7 +4,7 @@ import org.apache.pekko.actor.ActorSystem
 import skuber.api.client.RequestLoggingContext
 import skuber.model.Pod
 import skuber.json.format.podFormat
-import skuber.operator.controller.{ControllerBuilder, ControllerManager, ManagerConfig, WatchNamespace}
+import skuber.operator.controller.{ControllerBuilder, ControllerManager, ManagerConfig}
 import skuber.operator.reconciler.NamespacedName
 import skuber.pekkoclient.k8sInit
 
@@ -30,7 +30,7 @@ object AutoscalerOperator:
   import AutoscalerResource.given
 
   /** Label used to identify which Autoscaler owns a Pod */
-  val OwnerLabel = "scaling.example.com/autoscaler"
+  private val OwnerLabel = "scaling.example.com/autoscaler"
 
   def main(args: Array[String]): Unit =
     given system: ActorSystem = ActorSystem("autoscaler-operator")

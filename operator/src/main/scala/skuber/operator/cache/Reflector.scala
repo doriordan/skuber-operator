@@ -5,7 +5,7 @@ import org.apache.pekko.stream.scaladsl.{Keep, RestartSource, Sink}
 import org.apache.pekko.stream.{KillSwitch, KillSwitches, Materializer, RestartSettings}
 import play.api.libs.json.{Format, Json}
 import skuber.api.client.{EventType, Status, WatchEvent, WatchParameters}
-import skuber.json.format.ListResourceFormat
+import skuber.json.format.{ListResourceFormat, configMapListFmt}
 import skuber.model.{ListResource, ObjectResource, ResourceDefinition}
 import skuber.pekkoclient.PekkoKubernetesClient
 import skuber.operator.reconciler.OperatorLogger
@@ -73,7 +73,7 @@ class Reflector[R <: ObjectResource](
   client: PekkoKubernetesClient,
   cache: InMemoryResourceCache[R],
   config: ReflectorConfig = ReflectorConfig.default,
-  namespace: Option[String] = None  // None = watch all namespaces
+  clusterScope: Boolean = false
 )(using rd: ResourceDefinition[R], fmt: Format[R], system: ActorSystem):
 
   // Derive ListResource format from the item format
@@ -96,7 +96,7 @@ class Reflector[R <: ObjectResource](
     code match
       case Some(410) =>
         // generally indicates we need to clear cache and resync with cluster -
-        // the exception thrown here will  cause the stream to fail and be restarted, which
+        // the exception thrown here will  cause the stream to fail and be restarted which
         // achieves this goal
         val msg = s"Watch expired for ${rd.spec.names.kind}: $message"
         log.warn(msg)
@@ -149,10 +149,11 @@ class Reflector[R <: ObjectResource](
       val watcher = client.getWatcher[R]
 
       // First, list all resources
-      val listFuture = namespace match
-        case Some(ns) => client.usingNamespace(ns).list[ListResource[R]]()
-        case None => client.listInCluster[ListResource[R]](None)
-
+      val listFuture = if (clusterScope)
+        client.listInCluster[ListResource[R]](None)
+      else
+        client.list[ListResource[R]]()
+      
       org.apache.pekko.stream.scaladsl.Source.futureSource {
         listFuture.map { list =>
           log.info(s"Listed ${list.items.size} ${rd.spec.names.kind} resources")
@@ -216,27 +217,16 @@ class Reflector[R <: ObjectResource](
       cache.replace(Nil)
 
       // Use watchWithParameters with sendInitialEvents for streaming list
-      namespace match
-        case Some(ns) =>
-          val nsClient = client.usingNamespace(ns).asInstanceOf[PekkoKubernetesClient]
-          nsClient.getWatcher[R].watchWithParameters(WatchParameters(
-            resourceVersion = Some(""),
-            sendInitialEvents = true,
-            allowWatchBookmarks = true,
-            resourceVersionMatch = Some("NotOlderThan"),
-            errorHandler = Some(handleWatchError)
-          ))
-        case None =>
-          client.getWatcher[R].watchWithParameters(WatchParameters(
-            clusterScope = true,
-            resourceVersion = Some(""),
-            sendInitialEvents = true,
-            allowWatchBookmarks = true,
-            resourceVersionMatch = Some("NotOlderThan"),
-            errorHandler = Some(handleWatchError)
-          ))
+      client.getWatcher[R].watchWithParameters(WatchParameters(
+        clusterScope = clusterScope,
+        resourceVersion = Some(""),
+        sendInitialEvents = true,
+        allowWatchBookmarks = true,
+        resourceVersionMatch = Some("NotOlderThan"),
+        errorHandler = Some(handleWatchError)
+      ))
     }
-
+    
     val (ks, done) = watchSource
       .viaMat(KillSwitches.single)(Keep.right)
       .toMat(Sink.foreach(processEvent))(Keep.both)

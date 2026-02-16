@@ -15,16 +15,20 @@ package object controller:
   /**
    * Specifies the namespace scope for watching secondary resources.
    */
-  enum WatchNamespace:
+  enum WatchNamespaces:
     /** Use the same namespace configuration as the ControllerManager */
     case ManagerDefault
 
     /** Watch resources in all namespaces, regardless of manager config */
     case AllNamespaces
 
-    /** Watch resources only in the specified namespace */
-    case Specific(namespace: String)
+    /** Watch resources only in the specified namespaces */
+    case Specific(namespaces: List[String])
 
-  object WatchNamespace:
-    /** Convenience for watching a specific namespace */
-    def apply(namespace: String): WatchNamespace = Specific(namespace)
+  object WatchNamespaces:
+    /** Convenience for watching a single specific namespace */
+    def apply(namespace: String): WatchNamespaces = Specific(List(namespace))
+
+    /** Convenience for watching multiple pecific namespaces */
+    def apply(namespaces: List[String]): WatchNamespaces = Specific(namespaces)
+

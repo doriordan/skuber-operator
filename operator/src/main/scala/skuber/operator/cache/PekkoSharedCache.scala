@@ -48,8 +48,12 @@ class PekkoSharedCache(
       log.info(s"Creating cache for ${rd.spec.names.kind}$nsDesc")
       val cache = new InMemoryResourceCache[R]()
 
+      val namespacedClient: PekkoKubernetesClient = namespaceOverride match
+        case Some(ns) => client.usingNamespace(ns).asInstanceOf[PekkoKubernetesClient]
+        case None => client
+      
       // Create reflector but don't start it yet
-      val reflector = new Reflector[R](client, cache, config, namespaceOverride)
+      val reflector = new Reflector[R](namespacedClient, cache, config, namespaceOverride.isEmpty)
       reflectors.put(key, reflector)
 
       // If already started, start this reflector too
