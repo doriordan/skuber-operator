@@ -24,36 +24,29 @@ class ZController[R <: ObjectResource : Format : ResourceDefinition](
     ): UIO[Option[O]] = cache.get[O](name)
 
   private val initialBackoff: zio.Duration = 1.second
-  private val maxBackoff: zio.Duration     = 5.minutes
-
-  private def backoff(attempt: Int): zio.Duration =
-    val d = initialBackoff * math.pow(2.0, attempt.toDouble)
-    if d > maxBackoff then maxBackoff else d
 
   private def reconcileKey(name: NamespacedName): UIO[Unit] =
-    def attemptReconcile(attempt: Int): UIO[Unit] =
-      cache.get[R](name).flatMap {
-        case None =>
-          ZIO.logDebug(s"Resource $name not in cache (deleted), skipping")
-        case Some(resource) =>
-          reconciler.reconcile(resource, ctx).flatMap {
-            case ReconcileResult.Done =>
-              ZIO.unit
-            case ReconcileResult.Requeue(_) =>
-              queue.enqueue(name)
-            case ReconcileResult.RequeueAfter(delay, _) =>
-              ZIO.sleep(zio.Duration.fromScala(delay)) *> queue.enqueue(name)
-          }.catchAll { (err: K8SException) =>
-            ZIO.logError(s"Reconcile failed for $name (attempt $attempt): ${err.status.message.getOrElse("unknown")}") *>
-            ZIO.sleep(backoff(attempt)) *>
+    cache.get[R](name).flatMap {
+      case None =>
+        ZIO.logDebug(s"Resource $name not in cache (deleted), skipping")
+      case Some(resource) =>
+        reconciler.reconcile(resource, ctx).flatMap {
+          case ReconcileResult.Done =>
+            ZIO.unit
+          case ReconcileResult.Requeue(_) =>
             queue.enqueue(name)
-          }.catchAllDefect { err =>
-            ZIO.logError(s"Unexpected error reconciling $name (attempt $attempt): $err") *>
-            ZIO.sleep(backoff(attempt)) *>
-            queue.enqueue(name)
-          }
-      }
-    attemptReconcile(0)
+          case ReconcileResult.RequeueAfter(delay, _) =>
+            ZIO.sleep(zio.Duration.fromScala(delay)) *> queue.enqueue(name)
+        }.catchAll { (err: K8SException) =>
+          ZIO.logError(s"Reconcile failed for $name: ${err.status.message.getOrElse("unknown")}") *>
+          ZIO.sleep(initialBackoff) *>
+          queue.enqueue(name)
+        }.catchAllDefect { err =>
+          ZIO.logError(s"Unexpected error reconciling $name: $err") *>
+          ZIO.sleep(initialBackoff) *>
+          queue.enqueue(name)
+        }
+    }
 
   /** Run the controller forever. Fails if either the reflector or worker fiber fails. */
   def run: ZIO[Any, Throwable, Nothing] =

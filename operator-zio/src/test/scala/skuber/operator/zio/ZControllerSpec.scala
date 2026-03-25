@@ -119,6 +119,28 @@ object ZControllerSpec extends ZIOSpecDefault:
       yield assertTrue(n >= 2)
     },
 
+    test("RequeueAfter result re-enqueues after delay") {
+      val res   = mkRes("delta")
+      val event = WatchEvent(EventType.ADDED, res)
+      for
+        count <- Ref.make(0)
+        reconciler = new ZReconciler[TestResource]:
+          def reconcile(resource: TestResource, ctx: ZReconcileContext): IO[K8SException, ReconcileResult] =
+            count.updateAndGet(_ + 1).flatMap { n =>
+              if n >= 2 then ZIO.succeed(ReconcileResult.Done)
+              else ZIO.succeed(ReconcileResult.RequeueAfter(scala.concurrent.duration.FiniteDuration(100, java.util.concurrent.TimeUnit.MILLISECONDS), "retry"))
+            }
+        cache  <- ZInMemoryCache.make
+        queue  <- ZWorkQueue.make
+        client  = stubClient(List(event))
+        ctrl    = ZController[TestResource](reconciler, client, cache, queue)
+        fiber  <- ctrl.run.fork
+        _      <- count.get.repeatUntil(_ >= 2).timeout(10.seconds)
+        _      <- fiber.interrupt
+        n      <- count.get
+      yield assertTrue(n >= 2)
+    } @@ TestAspect.withLiveClock,
+
     test("reconciler K8SException triggers backoff re-enqueue") {
       // Verify the reconciler is called at least once when it throws K8SException.
       // The first backoff is 1 second, so we only assert >= 1 call to avoid
