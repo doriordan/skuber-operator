@@ -79,6 +79,10 @@ package object zio:
         "spec" -> o.spec
       )
 
+  given ResourceDefinition[TestResource] = ResourceDefinition[TestResource](
+    kind = "TestResource", group = "test", version = "v1"
+  )
+
   given ResourceDefinition[TestResource2] = ResourceDefinition[TestResource2](
     kind = "TestResource2", group = "test2", version = "v1"
   )

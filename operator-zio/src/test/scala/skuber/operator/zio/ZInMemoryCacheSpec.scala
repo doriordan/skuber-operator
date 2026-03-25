@@ -9,14 +9,6 @@ import skuber.operator.reconciler.NamespacedName
 
 object ZInMemoryCacheSpec extends ZIOSpecDefault:
 
-  given ResourceDefinition[TestResource] = ResourceDefinition[TestResource](
-    kind = "TestResource", group = "test", version = "v1"
-  )
-
-  given ResourceDefinition[TestResource2] = ResourceDefinition[TestResource2](
-    kind = "TestResource2", group = "test2", version = "v1"
-  )
-
   def mkResource(ns: String, name: String, value: String = "v"): TestResource =
     TestResource(metadata = skuber.model.ObjectMeta(namespace = ns, name = name), spec = TestSpec(value))
 
