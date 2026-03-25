@@ -91,8 +91,7 @@ lazy val operatorZio = (project in file("operator-zio"))
     commonSettings,
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
     libraryDependencies ++= Seq(
-      skuberCore,
-      playJson,
+      skuberZio,
       "dev.zio" %% "zio"          % zioVersion,
       "dev.zio" %% "zio-streams"  % zioVersion,
       "dev.zio" %% "zio-test"     % zioVersion % Test,
