@@ -24,7 +24,7 @@ class ZInMemoryCache private (
   def update[O <: ObjectResource](obj: O)(
     using fmt: Format[O], rd: ResourceDefinition[O]
   ): UIO[Unit] =
-    val name = NamespacedName(obj.metadata.namespace, obj.metadata.name)
+    val name = NamespacedName(obj)
     val jsv  = Json.toJson(obj)
     stateRef.update { state =>
       val bucket = state.getOrElse(kindKey, Map.empty)
@@ -43,9 +43,13 @@ class ZInMemoryCache private (
   def list[O <: ObjectResource](
     using fmt: Format[O], rd: ResourceDefinition[O]
   ): UIO[List[O]] =
-    stateRef.get.map { state =>
-      state.getOrElse(kindKey, Map.empty).values.toList
-        .flatMap(jsv => Json.fromJson[O](jsv).asOpt)
+    stateRef.get.flatMap { state =>
+      ZIO.foreach(state.getOrElse(kindKey, Map.empty).values.toList) { jsv =>
+        Json.fromJson[O](jsv) match
+          case play.api.libs.json.JsSuccess(o, _) => ZIO.some(o)
+          case play.api.libs.json.JsError(errors)  =>
+            ZIO.logWarning(s"Cache deserialization failed for ${kindKey}: $errors").as(None)
+      }.map(_.flatten)
     }
 
 object ZInMemoryCache:

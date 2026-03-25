@@ -13,6 +13,10 @@ object ZInMemoryCacheSpec extends ZIOSpecDefault:
     kind = "TestResource", group = "test", version = "v1"
   )
 
+  given ResourceDefinition[TestResource2] = ResourceDefinition[TestResource2](
+    kind = "TestResource2", group = "test2", version = "v1"
+  )
+
   def mkResource(ns: String, name: String, value: String = "v"): TestResource =
     TestResource(metadata = skuber.model.ObjectMeta(namespace = ns, name = name), spec = TestSpec(value))
 
@@ -73,5 +77,24 @@ object ZInMemoryCacheSpec extends ZIOSpecDefault:
         _     <- ZIO.collectAllPar(resources.map(cache.update))
         items <- cache.list[TestResource]
       yield assertTrue(items.size == 50)
+    },
+
+    test("different resource kinds are isolated in the same cache") {
+      val r = mkResource("ns", "foo", "v1")
+      for
+        cache <- ZInMemoryCache.make
+        _     <- cache.update(r)
+        // Deleting a different kind should not affect TestResource
+        _     <- cache.delete[TestResource2](NamespacedName("ns", "foo"))
+        result <- cache.get[TestResource](NamespacedName("ns", "foo"))
+      yield assertTrue(result.contains(r))
+    },
+
+    test("delete on non-existent key is a no-op") {
+      for
+        cache <- ZInMemoryCache.make
+        _     <- cache.delete[TestResource](NamespacedName("ns", "never-inserted"))
+        result <- cache.get[TestResource](NamespacedName("ns", "never-inserted"))
+      yield assertTrue(result.isEmpty)
     }
   )
