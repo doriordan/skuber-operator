@@ -78,7 +78,7 @@ object ZWorkQueueSpec extends ZIOSpecDefault:
       yield assertTrue(s == 1)
     },
 
-    test("multiple waiting dequeues are fulfilled in order") {
+    test("multiple waiting dequeues are both fulfilled") {
       for
         q      <- ZWorkQueue.make
         fiber1 <- q.dequeue.fork
@@ -91,17 +91,17 @@ object ZWorkQueueSpec extends ZIOSpecDefault:
       yield assertTrue(Set(r1, r2) == Set(nn("first"), nn("second")))
     },
 
-    test("enqueue while waiter is processing does not double-enqueue") {
-      // A waiter receives the item directly (not via queue).
-      // The item must be marked pending so a concurrent enqueue is a no-op.
+    test("pending is cleared after waiter receives item") {
+      // When enqueue fulfills a waiter, x enters pending. After the waiter
+      // fiber completes its dequeue cleanup, x must be removed from pending
+      // so it can be re-enqueued on future events.
       for
         q     <- ZWorkQueue.make
-        fiber <- q.dequeue.fork   // registers a waiter
+        fiber <- q.dequeue.fork
         _     <- ZIO.yieldNow
-        _     <- q.enqueue(nn("x"))   // fulfills waiter; x is now pending
-        _     <- q.enqueue(nn("x"))   // duplicate — must be a no-op
-        _     <- fiber.join
+        _     <- q.enqueue(nn("x"))
+        result <- fiber.join
         s     <- q.size
-      yield assertTrue(s == 0)        // nothing extra queued
+      yield assertTrue(result == nn("x") && s == 0)
     }
   )

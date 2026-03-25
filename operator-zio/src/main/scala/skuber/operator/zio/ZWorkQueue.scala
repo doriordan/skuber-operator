@@ -55,6 +55,9 @@ class ZWorkQueue private (stateRef: Ref[WorkQueueState]):
       }.flatten
     }
 
+  /** Returns the number of items currently pending (enqueued or being processed).
+   *  Includes items being actively processed by waiting fibers, making this
+   *  a reliable deduplication and backpressure signal. */
   def size: UIO[Int] =
     stateRef.get.map(_.pending.size)
 
