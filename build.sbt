@@ -73,8 +73,8 @@ lazy val operatorPekko = (project in file("operator-pekko"))
     name := "skuber-operator-pekko",
     commonSettings,
     libraryDependencies ++= Seq(
+      skuberCore,   // explicit, though transitive from operatorCore
       skuberPekko,
-      playJson,
       pekkoActors,
       pekkoStream,
       pekkoSlf4j,
