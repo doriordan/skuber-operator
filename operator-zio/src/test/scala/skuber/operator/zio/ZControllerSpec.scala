@@ -140,5 +140,5 @@ object ZControllerSpec extends ZIOSpecDefault:
         _      <- fiber.interrupt
         n      <- count.get
       yield assertTrue(n >= 1)
-    }
+    } @@ TestAspect.withLiveClock
   )
