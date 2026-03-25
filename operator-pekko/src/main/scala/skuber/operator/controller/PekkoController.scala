@@ -177,7 +177,7 @@ class PekkoController[R <: ObjectResource](
         log.error(s"Reconcile loop failed for $kind", e)
     }
 
-  private def reconcileKey(key: NamespacedName, cache: ResourceCache[R]): Future[ReconcileOutcome[R]] =
+  private def  reconcileKey(key: NamespacedName, cache: ResourceCache[R]): Future[ReconcileOutcome[R]] =
     val startTime = System.nanoTime()
 
     cache.get(key) match
