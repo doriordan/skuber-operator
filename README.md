@@ -153,7 +153,7 @@ val reconciler = new Reconciler[Autoscaler] {
 }  
 ```
 The above reconciler carries out these basic steps:
-- first check if the Autoscaler status reflects actual status (replica count) on the cluster, updating if not. Because the managed replicas are watched by the controller (see Step 3), the current pod list is in the local cache so it does not have to fetch the replica list from the cluster each time.
+- first check if the Autoscaler status reflects actual status (replica count) on the cluster, updating if not. Because the managed replicas are watched by the controller (see Step 2), the current pod list is in the local cache so it does not have to fetch the replica list from the cluster each time.
 - next check if the actual replica count is the same as the desired replica count - if not, it either creates or deletes a replica (pod) as required
 - it also produces events which Kubernetes stores and returns to users when requested.
 
