@@ -29,6 +29,12 @@ enum Scope:
  * - `given Scale.SubresourceSpec[WebApp]` (if Spec has `replicas: Int`)
  * - `def crd: CustomResourceDefinition`
  * - `def apply(spec: Spec): WebApp`
+ * - `def applyConfig(name: String): CustomResourceApplyConfig[WebApp]` for server-side apply (SSA)
+ * - `def applyConfig(name: String, spec: JsObject): CustomResourceApplyConfig[WebApp]` for SSA with a partial spec
+ *
+ * SSA apply configurations intentionally take a partial `JsObject` spec rather than the normal `Spec` case class.
+ * This allows callers to include only fields they want their field manager to own; omitted fields are not claimed
+ * by server-side apply.
  *
  * @param group API group (e.g., "mycompany.com")
  * @param version API version (e.g., "v1", "v1alpha1")

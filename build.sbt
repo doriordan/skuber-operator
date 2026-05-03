@@ -1,7 +1,7 @@
 
 resolvers += "Typesafe Releases" at "https://repo.typesafe.com/typesafe/releases/"
 
-val skuberVersion = "3.1.0"
+val skuberVersion = "3.2.1"
 
 // Core dependencies
 val scalaTest = "org.scalatest" %% "scalatest" % "3.2.19"

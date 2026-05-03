@@ -120,6 +120,56 @@ class CustomResourceMacroSpec extends AnyFlatSpec with Matchers:
     cr.status.shouldBe(None)
   }
 
+  "CustomResourceDef applyConfig" should "create an SSA apply configuration with metadata only" in {
+    import CustomResourceApplyConfig.given
+
+    val ac = WebAppResource.applyConfig("my-webapp")
+      .addLabel("app" -> "web")
+      .addAnnotation("managed-by" -> "skuber-operator")
+
+    ac.name.shouldBe("my-webapp")
+
+    val json = Json.toJson(ac)
+    (json \ "kind").as[String].shouldBe("WebApp")
+    (json \ "apiVersion").as[String].shouldBe("test.example.com/v1")
+    (json \ "metadata" \ "name").as[String].shouldBe("my-webapp")
+    (json \ "metadata" \ "labels" \ "app").as[String].shouldBe("web")
+    (json \ "metadata" \ "annotations" \ "managed-by").as[String].shouldBe("skuber-operator")
+    (json \ "spec").toOption.shouldBe(None)
+  }
+
+  it should "serialize only explicitly supplied partial spec fields for SSA" in {
+    import CustomResourceApplyConfig.given
+
+    val ac = WebAppResource.applyConfig(
+      "my-webapp",
+      Json.obj(
+        "replicas" -> 3,
+        "image" -> "nginx"
+      )
+    )
+
+    val json = Json.toJson(ac)
+    (json \ "spec" \ "replicas").as[Int].shouldBe(3)
+    (json \ "spec" \ "image").as[String].shouldBe("nginx")
+    (json \ "spec" \ "port").toOption.shouldBe(None)
+  }
+
+  it should "work for spec-only resources" in {
+    import CustomResourceApplyConfig.given
+
+    val ac = ConfigMap2Resource.applyConfig(
+      "my-config",
+      Json.obj("data" -> Json.obj("key" -> "value"))
+    )
+
+    val json = Json.toJson(ac)
+    (json \ "kind").as[String].shouldBe("ConfigMap2")
+    (json \ "apiVersion").as[String].shouldBe("test.example.com/v1alpha1")
+    (json \ "metadata" \ "name").as[String].shouldBe("my-config")
+    (json \ "spec" \ "data" \ "key").as[String].shouldBe("value")
+  }
+
   it should "create resources that serialize to valid JSON" in {
     import WebAppResource.given
     val cr = WebAppResource("my-webapp", WebAppResource.Spec(3, "nginx", 80))
