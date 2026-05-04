@@ -59,17 +59,17 @@ object OpenApiSchemaGenerator:
         '{ JsObject(Map("type" -> JsString("string"))) }
 
       // Option[T] - unwrap to get inner type schema
-      case AppliedType(tycon, List(inner)) if tycon.typeSymbol == TypeRepr.of[Option[_]].typeSymbol =>
+      case AppliedType(tycon, List(inner)) if tycon.typeSymbol == TypeRepr.of[Option[?]].typeSymbol =>
         generateSchema(inner)
 
       // List[T] or Seq[T]
-      case AppliedType(tycon, List(inner)) if tycon.typeSymbol == TypeRepr.of[List[_]].typeSymbol ||
-                                               tycon.typeSymbol == TypeRepr.of[Seq[_]].typeSymbol =>
+      case AppliedType(tycon, List(inner)) if tycon.typeSymbol == TypeRepr.of[List[?]].typeSymbol ||
+                                               tycon.typeSymbol == TypeRepr.of[Seq[?]].typeSymbol =>
         val itemsSchema = generateSchema(inner)
         '{ JsObject(Map("type" -> JsString("array"), "items" -> $itemsSchema)) }
 
       // Map[String, T]
-      case AppliedType(tycon, List(keyType, valueType)) if tycon.typeSymbol == TypeRepr.of[Map[_, _]].typeSymbol =>
+      case AppliedType(tycon, List(keyType, valueType)) if tycon.typeSymbol == TypeRepr.of[Map[?, ?]].typeSymbol =>
         if !(keyType =:= TypeRepr.of[String]) then
           report.errorAndAbort(s"Map keys must be String for OpenAPI schema, got: ${keyType.show}")
         val valueSchema = generateSchema(valueType)
@@ -100,7 +100,7 @@ object OpenApiSchemaGenerator:
 
       // Check if field is Option
       val isOption = fieldType match
-        case AppliedType(tycon, _) => tycon.typeSymbol == TypeRepr.of[Option[_]].typeSymbol
+        case AppliedType(tycon, _) => tycon.typeSymbol == TypeRepr.of[Option[?]].typeSymbol
         case _ => false
 
       val isRequired = !isOption && !hasDefault

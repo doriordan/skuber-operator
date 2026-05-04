@@ -1,14 +1,51 @@
 package skuber.operator.crd
 
-import play.api.libs.json.{Format, OFormat, JsNull, JsValue, JsResult, JsError}
+import play.api.libs.json.{Format, OFormat, OWrites, JsNull, JsObject, JsPath, JsResult, JsValue, JsError}
+import play.api.libs.functional.syntax._
 import skuber.model.{
-  CustomResource, HasStatusSubresource, ObjectMeta, ResourceDefinition, ResourceSpecification
+  CustomResource, HasStatusSubresource, ObjectMeta, ObjectResource, ResourceDefinition, ResourceSpecification
 }
+import skuber.model.ac.{ApplyConfiguration, ObjectMetaApplyConfig}
 
 /** Format for Nothing - used by spec-only resources where status is None */
 private[crd] given nothingFormat: Format[Nothing] = new Format[Nothing]:
   def reads(json: JsValue): JsResult[Nothing] = JsError("Nothing cannot be read")
   def writes(o: Nothing): JsValue = JsNull
+
+/**
+ * Generic server-side-apply configuration for custom resources.
+ *
+ * CRD specs are represented as a JsObject fragment rather than the normal Spec case class so callers can
+ * include exactly the fields they want this field manager to own. Omitted fields are not written and are
+ * therefore not claimed by SSA.
+ */
+case class CustomResourceApplyConfig[O <: ObjectResource](
+  kind: String,
+  apiVersion: String,
+  metadata: Option[ObjectMetaApplyConfig] = None,
+  spec: Option[JsObject] = None
+) extends ApplyConfiguration[O]:
+  def name: String = metadata.flatMap(_.name).getOrElse("")
+
+  def withMetadata(m: ObjectMetaApplyConfig): CustomResourceApplyConfig[O] =
+    copy(metadata = Some(m))
+
+  def withSpec(s: JsObject): CustomResourceApplyConfig[O] =
+    copy(spec = Some(s))
+
+  def addLabel(kv: (String, String)): CustomResourceApplyConfig[O] =
+    copy(metadata = Some(metadata.getOrElse(ObjectMetaApplyConfig()).addLabel(kv)))
+
+  def addAnnotation(kv: (String, String)): CustomResourceApplyConfig[O] =
+    copy(metadata = Some(metadata.getOrElse(ObjectMetaApplyConfig()).addAnnotation(kv)))
+
+object CustomResourceApplyConfig:
+  given writes[O <: ObjectResource]: OWrites[CustomResourceApplyConfig[O]] = (
+    (JsPath \ "kind").write[String] and
+    (JsPath \ "apiVersion").write[String] and
+    (JsPath \ "metadata").writeNullable[ObjectMetaApplyConfig] and
+    (JsPath \ "spec").writeNullable[JsObject]
+  )(c => (c.kind, c.apiVersion, c.metadata, c.spec))
 
 /**
  * Base trait for custom resources with only a Spec (no Status).
@@ -31,6 +68,22 @@ trait CustomResourceSpecDef[S]:
   def apply(name: String, spec: S): Resource =
     val (kind, group, version, _, _, _, _) = crMetadata
     CustomResource[S, Nothing](kind, s"$group/$version", ObjectMeta(name = name), spec, None)
+
+  /**
+   * Create a server-side-apply configuration for this custom resource.
+   * Add desired spec fields with `.withSpec(Json.obj(...))`; omitted fields are not claimed by SSA.
+   */
+  def applyConfig(name: String): CustomResourceApplyConfig[Resource] =
+    val (kind, group, version, _, _, _, _) = crMetadata
+    CustomResourceApplyConfig[Resource](
+      kind = kind,
+      apiVersion = s"$group/$version",
+      metadata = Some(ObjectMetaApplyConfig(name = Some(name)))
+    )
+
+  /** Create a server-side-apply configuration with a partial spec object. */
+  def applyConfig(name: String, spec: JsObject): CustomResourceApplyConfig[Resource] =
+    applyConfig(name).withSpec(spec)
 
   /** ResourceDefinition for API calls */
   given resourceDefinition: ResourceDefinition[Resource] =
@@ -78,6 +131,22 @@ trait CustomResourceDef[S, St]:
   def apply(name: String, spec: S): Resource =
     val (kind, group, version, _, _, _, _) = crMetadata
     CustomResource[S, St](kind, s"$group/$version", ObjectMeta(name = name), spec, None)
+
+  /**
+   * Create a server-side-apply configuration for this custom resource.
+   * Add desired spec fields with `.withSpec(Json.obj(...))`; omitted fields are not claimed by SSA.
+   */
+  def applyConfig(name: String): CustomResourceApplyConfig[Resource] =
+    val (kind, group, version, _, _, _, _) = crMetadata
+    CustomResourceApplyConfig[Resource](
+      kind = kind,
+      apiVersion = s"$group/$version",
+      metadata = Some(ObjectMetaApplyConfig(name = Some(name)))
+    )
+
+  /** Create a server-side-apply configuration with a partial spec object. */
+  def applyConfig(name: String, spec: JsObject): CustomResourceApplyConfig[Resource] =
+    applyConfig(name).withSpec(spec)
 
   /** ResourceDefinition for API calls */
   given resourceDefinition: ResourceDefinition[Resource] =
