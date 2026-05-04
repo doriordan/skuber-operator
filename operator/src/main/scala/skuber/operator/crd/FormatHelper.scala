@@ -32,7 +32,7 @@ object FormatHelper:
     Reads[T] { json =>
       try
         val values = fieldNames.zip(fieldReads).map { (name, reader) =>
-          (json \ name).as(reader.asInstanceOf[Reads[Any]])
+          (json \ name).as(using reader.asInstanceOf[Reads[Any]])
         }
         val product = mirror.fromProduct(Tuple.fromArray(values.toArray))
         JsSuccess(product)

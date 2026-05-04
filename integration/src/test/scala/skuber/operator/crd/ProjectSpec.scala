@@ -5,6 +5,7 @@ import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.SpanSugar.*
 import play.api.libs.json.Json
+import skuber.api.client.K8SException
 import skuber.model.ListResource
 import skuber.model.apiextensions.v1.CustomResourceDefinition
 
@@ -167,8 +168,9 @@ abstract class ProjectSpec extends K8SFixture with Eventually with Matchers with
 
   it should "verify Project was deleted" in {
     withK8sClient { k8s =>
-      k8s.get[Project](testResourceName).failed.map { ex =>
-        ex.getMessage should include("404")
+      k8s.get[Project](testResourceName).failed.map {
+        case notfound: K8SException if notfound.code.contains(404) => succeed
+        case other => fail(s"Expected 404 status code, but got success or a different error: $other")
       }
     }
   }

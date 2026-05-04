@@ -24,13 +24,13 @@ val pekkoActors = pekkoGroup %% "pekko-actor" % pekkoVersion
 val skuberCore = "io.skuber" %% "skuber-core" % skuberVersion
 val skuberPekko = "io.skuber" %% "skuber-pekko" % skuberVersion
 
-ThisBuild / version := "0.1.0-SNAPSHOT"
+ThisBuild / version := "0.1.0"
 
 ThisBuild / organization := "io.skuber"
 
 sonatypeProfileName := "io.skuber"
 
-ThisBuild / publishMavenStyle := true
+publishMavenStyle := true
 
 ThisBuild / licenses := Seq("APL2" -> url("http://www.apache.org/licenses/LICENSE-2.0.txt"))
 
@@ -53,11 +53,7 @@ lazy val commonSettings = Seq(
   crossScalaVersions := Seq("3.8.1"),
   // Enable experimental for MacroAnnotation
   scalacOptions ++= Seq("-Xcheck-macros", "-experimental"),
-  publishTo := {
-    val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
-    if (isSnapshot.value) Some("central-snapshots" at centralSnapshots)
-    else localStaging.value
-  },
+  publishTo := localStaging.value,
   pomIncludeRepository := { _ => false },
   Test / classLoaderLayeringStrategy := ClassLoaderLayeringStrategy.Flat
 )
@@ -96,8 +92,18 @@ lazy val integration = (project in file("integration"))
   )
   .dependsOn(operator)
 
+// sbt plugin for generating typed SSA apply configs from @customResource definitions
+lazy val sbtCodegen = (project in file("sbt-plugin"))
+  .settings(
+    name := "sbt-skuber-operator",
+    sbtPlugin := true,
+    publishTo := localStaging.value,
+    pomIncludeRepository := { _ => false }
+  )
+
 // Examples - demonstrates building Kubernetes operators with Skuber
 lazy val examples = (project in file("examples"))
+  .enablePlugins(skuber.operator.codegen.SkuberApplyConfigPlugin)
   .settings(
     name := "skuber-operator-examples",
     publish / skip := true,
@@ -121,6 +127,6 @@ lazy val root = (project in file("."))
     publish / skip := true,
     commonSettings
   )
-  .aggregate(operator, integration, examples)
+  .aggregate(operator, integration, examples, sbtCodegen)
 
 root / publishArtifact := false

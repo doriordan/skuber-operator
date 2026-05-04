@@ -5,7 +5,7 @@ import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.SpanSugar.*
 import play.api.libs.json.Json
-import skuber.api.client.KubernetesClient
+import skuber.api.client.{K8SException, KubernetesClient}
 import skuber.model.*
 import skuber.model.apiextensions.v1.CustomResourceDefinition
 
@@ -144,8 +144,9 @@ abstract class AutoscalerSpec extends K8SFixture with Eventually with Matchers w
 
   it should "verify Autoscaler was deleted" in {
     withK8sClient { k8s =>
-      k8s.get[Autoscaler.Resource](testResourceName).failed.map { ex =>
-        ex.getMessage should include("404")
+      k8s.get[Autoscaler.Resource](testResourceName).failed.map {
+        case ex: K8SException if ex.code.contains(404) => succeed
+        case other => fail(s"Expected 404 status code, but got success or another error: $other")
       }
     }
   }
