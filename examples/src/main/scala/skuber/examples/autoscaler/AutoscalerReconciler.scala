@@ -1,13 +1,14 @@
 package skuber.examples.autoscaler
 
 import org.apache.pekko.actor.ActorSystem
-import skuber.api.client.RequestLoggingContext
+import skuber.api.client.{ApplyOptions, RequestLoggingContext}
 import skuber.model.Pod
 import skuber.json.format.podFormat
 import skuber.operator.reconciler.*
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.*
+import AutoscalerResourceApplyConfigs.*
 
 /**
  * Reconciler for Autoscaler resources.
@@ -132,16 +133,13 @@ class AutoscalerReconciler(using system: ActorSystem) extends Reconciler[Autosca
       else
         s"Scaling from $currentReplicas to $desiredReplicas replicas"
 
-      val newStatus = AutoscalerResource.Status(
-        currentReplicas = currentReplicas,
-        desiredReplicas = desiredReplicas,
-        lastObservedCPU = None,  // Would come from metrics
-        message = message
-      )
-
-      val updated = autoscaler.copy(status = Some(newStatus))
+      val statusApplyConfig = StatusApplyConfig()
+          .withCurrentReplicas(currentReplicas)
+          .withDesiredReplicas(desiredReplicas)
+      val autoscalerApplyConfig = AutoscalerApplyConfig(name=autoscaler.name).withStatus(statusApplyConfig)
+      
       ctx.client.usingNamespace(autoscaler.metadata.namespace)
-        .updateStatus(updated)
+        .apply(autoscalerApplyConfig, options = ApplyOptions("autoscaler", true))
         .map(_ => ())
         .recover { case e =>
           ctx.log.warn(s"Failed to update status: ${e.getMessage}")
