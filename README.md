@@ -17,6 +17,8 @@ Key features:
 
 The SDK enables developers to easily define Kubernetes custom resources as annotated case classes  - a simple example:
 ```scala
+import scala.annotation.experimental
+import skuber.operator.crd.{customResource, CustomResourceDef, Scope}
 // Autoscaler is a simple custom resource type which could be used as the basis for an autoscaling operator
 @experimental
 @customResource(
@@ -55,18 +57,41 @@ The SDK has dependencies on Skuber (`3.1+`) and Pekko for the underlying Kuberne
 
 ## Quickstart
 
-*The status of this project is currently pre-release so to play around with building an operator, it is probably best to clone this repo and create a subproject locally for your use case, similar to the 'examples' subproject. The aim is to create an initial release quite soon and update docs accordingly.*
+The SDK consists of a library for the primary operator functionality and an optional SBT plugin for auto-generating some useful [Apply Configuration](https://github.com/doriordan/skuber/blob/3.2.x/docs/GUIDE.md#server-side-apply) classes for any custom resources defined in your code.
 
-The following is a simplified example of building an operator (more a controller really) - an Autoscaler that maintains a specified number of replicas that a user can scale up or down by simply changing the spec on the custom resource, so it operates really as a simplified replica set controller.
-The steps to create the operator are:
+The following steps through the setup for a simple example.
 
-#### Step 1: Define the Autoscaler custom resource type 
+#### Step 1: Build Configuration
 
-See the example above.
+For this simple example project a simple Autoscaler controller), we will use both the main operator library and the SBT plugin. 
+
+First add the plugin to your `plugins.sbt` file:
+
+```sbt
+addSbtPlugin("io.skuber" % "sbt-skuber-operator" % "0.1.0")
+```
+
+Now configure your top-level `build.sbt` with the required dependencies and other settings:
+
+```sbt
+lazy val root = (project in file("."))
+  .enablePlugins(SkuberApplyConfigPlugin)
+  .settings(
+    name := "...",
+    version := "0.1.0",
+    scalaVersion := "3.8.1",
+    scalacOptions += "-experimental",
+    libraryDependencies += "io.skuber" %% "skuber-operator" % "0.1.0"
+  )
+```
+
+#### Step 2: Define the Autoscaler custom resource type 
+
+See the example code above.
 
 This tells your controller everything it needs to know about the custom resource type, but you will also need to define a corresponding [CRD](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#customresourcedefinitions) that describes the same custom resource type to Kubernetes itself. This can be done manually on the cluster or programmatically - see the `AutoscalerCRDFixture` in the integration tests for an example of the latter.
 
-#### Step 2: Build the controller
+#### Step 3: Build the controller
 
 ```scala
 
@@ -118,17 +143,19 @@ val reconciler = new Reconciler[Autoscaler] {
         // get the underlying Skuber client for updating managed resources if necessary
         val k8s = ctx.client
         val updateStatusIfNecessary = if (actualAvailableReplicas != currentStatusReplicas) {
-          // update Autoscaler status to reflect real count
-          val currentStatus = autoscaler.status.getOrElse(Autoscaler.Status())
-          val newStatus = currentStatus.copy(availableReplicas = actualAvailableReplicas)
-          val updated = autoscaler.copy(status = Some(newStatus))
-          k8s.usingNamespace(autoscaler.metadata.namespace).updateStatus(updated)
+          // update Autoscaler status to reflect real count 
+          if actualAvailableReplicas != currentStatusReplicas then
+          // use generated Autoscaler apply configuration class to represent the changes we want to make
+          val autoscalerApplyUpdate = AutoscalerApplyConfig(name = autoscaler.name)
+            .withStatus(StatusApplyConfig().withAvailableReplicas(actualAvailableReplicas))
+          val applyOptions = ApplyOptions(fieldManager = "autoscaler", force = true)
+          // now apply the updates using Server Side apply (SSA)
+          k8s.usingNamespace(autoscaler.metadata.namespace).apply(autoscalerApplyUpdate, applyOptions)
         } else {
           Future.successful()  // no status update needed
         }
         // now add or remove a new replica if desired != actual replicas - this will gradually 
-        // converge the actual to the desired state as pods coming up and down on the cluster 
-        // trigger further reconciliations
+        // converge the actual to the desired state 
         val addOrRemoveReplicaIfNecessary = if (actualAvailableReplicas > desiredReplicas) {
           // select a pod for deletion and delete it
           val selectedPodName = ...
@@ -157,7 +184,10 @@ The above reconciler carries out these basic steps:
 - next check if the actual replica count is the same as the desired replica count - if not, it either creates or deletes a replica (pod) as required
 - it also produces events which Kubernetes stores and returns to users when requested.
 
-#### Step 4: Register and start the contoller.
+In this case the reconciler uses case classes automatically generated for any custom resources in the project by the included SBT plugin
+to configure the intended changes to the status, passing this configuration to the `apply` (Server Side Apply) API to enact the changes.
+
+#### Step 4: Register and start the controller.
 
 ```scala
 
