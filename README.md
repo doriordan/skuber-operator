@@ -63,7 +63,7 @@ The following steps through the setup for a simple example.
 
 #### Step 1: Build Configuration
 
-For this simple example project a simple Autoscaler controller), we will use both the main operator library and the SBT plugin. 
+For this simple example project (a simple Autoscaler controller), we will use both the main operator library and the SBT plugin. 
 
 First add the plugin to your `plugins.sbt` file:
 
@@ -144,7 +144,6 @@ val reconciler = new Reconciler[Autoscaler] {
         val k8s = ctx.client
         val updateStatusIfNecessary = if (actualAvailableReplicas != currentStatusReplicas) {
           // update Autoscaler status to reflect real count 
-          if actualAvailableReplicas != currentStatusReplicas then
           // use generated Autoscaler apply configuration class to represent the changes we want to make
           val autoscalerApplyUpdate = AutoscalerApplyConfig(name = autoscaler.name)
             .withStatus(StatusApplyConfig().withAvailableReplicas(actualAvailableReplicas))
