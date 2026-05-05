@@ -1,17 +1,22 @@
 # Skuber Operator
 
-*This project is at an early pre-release stage and is being constantly updated, so check back regularly for updates*
+*This project is currently at a pre-release version (0.1.0), so expect further changes and updates*
 
-An SDK for building Kubernetes operators and controllers in Scala.
+An SDK for building Kubernetes operators and controllers in Scala, including the custom resources that most controllers need.
 
 Key features:
-- define boilerplate-free Kubernetes custom resources using Scala case classes and macro annotations
-- create operators in Scala that support the [Operator Pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) 
-- the design of the controllers follows established best practices in the Kubernetes ecosystem
-- application defines reconcilers that drive actual state of controlled resources towards desired state
-- the controller takes care of monitoring the cluster and triggering reconciliation when required
-- a reflector continually keeps a local cache of monitored resources in sync with cluster
-- leverages the long established [Skuber](https://github.com/doriordan/skuber) library for underlying Kubernetes client functionality including event handling
+- define boilerplate-free Kubernetes custom resources
+  - custom resources are modelled as normal Scala case classes with a `@customResource` macro annotation
+  - automatic generation of the code needed to use these custom resource kinds in operators and controllers
+  - an optional SBT plugin automatically generates [Apply Configurations](https://github.com/doriordan/skuber/blob/3.2.x/docs/GUIDE.md#server-side-apply) for the custom resources, often used by controllers to safely apply updates to the resources
+- create operators in Scala that support the [Operator Pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
+  - the design of the controllers follows established best practices in the Kubernetes ecosystem
+  - application defines reconcilers that drive actual state of controlled resources towards desired state
+  - the controller takes care of monitoring the cluster and triggering reconciliation when required
+  - a reflector continually keeps a local cache of monitored resources in sync with cluster
+- leverages the long established [Skuber](https://github.com/doriordan/skuber) library for underlying Kubernetes client functionality including managing resources on the cluster, event streaming and so on.
+
+
 
 ## Custom Resources
 
@@ -183,8 +188,7 @@ The above reconciler carries out these basic steps:
 - next check if the actual replica count is the same as the desired replica count - if not, it either creates or deletes a replica (pod) as required
 - it also produces events which Kubernetes stores and returns to users when requested.
 
-In this case the reconciler uses case classes automatically generated for any custom resources in the project by the included SBT plugin
-to configure the intended changes to the status, passing this configuration to the `apply` (Server Side Apply) API to enact the changes.
+In this case the reconciler uses Apply Configuration case classes automatically generated for any custom resources in the project by the included SBT plugin to configure the intended changes to the status, passing this configuration to the `apply` (Server Side Apply) API to safely apply the changes without conflicting with other updates.
 
 #### Step 4: Register and start the controller.
 
