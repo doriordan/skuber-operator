@@ -85,7 +85,7 @@ class PekkoSharedCache(
     def checkAll(): Future[Boolean] =
       if hasSynced then
         Future.successful(true)
-      else if deadline.isOverdue then
+      else if deadline.isOverdue() then
         Future.successful(false)
       else
         // Poll every 100ms
