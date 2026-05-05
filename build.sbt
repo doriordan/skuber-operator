@@ -4,11 +4,11 @@ resolvers += "Typesafe Releases" at "https://repo.typesafe.com/typesafe/releases
 val skuberVersion = "3.2.1"
 
 // Core dependencies
-val scalaTest = "org.scalatest" %% "scalatest" % "3.2.19"
-val mockito = "org.mockito" % "mockito-core" % "5.21.0"
+val scalaTest = "org.scalatest" %% "scalatest" % "3.2.20"
+val mockito = "org.mockito" % "mockito-core" % "5.23.0"
 val scalaTestMockito = "org.scalatestplus" %% "mockito-5-18" % "3.2.19.0"
-val typesafeConfig = "com.typesafe" % "config" % "1.4.5"
-val logback = "ch.qos.logback" % "logback-classic" % "1.5.28" % Runtime
+val typesafeConfig = "com.typesafe" % "config" % "1.4.7"
+val logback = "ch.qos.logback" % "logback-classic" % "1.5.32" % Runtime
 val playJson = "org.playframework" %% "play-json" % "3.0.6"
 
 // Pekko dependencies
@@ -49,8 +49,8 @@ ThisBuild / developers := List(
 
 lazy val commonSettings = Seq(
   // Scala 3.8+ required for macro annotations
-  scalaVersion := "3.8.1",
-  crossScalaVersions := Seq("3.8.1"),
+  scalaVersion := "3.8.3",
+  crossScalaVersions := Seq("3.8.3"),
   // Enable experimental for MacroAnnotation
   scalacOptions ++= Seq("-Xcheck-macros", "-experimental"),
   publishTo := localStaging.value,
@@ -85,7 +85,7 @@ lazy val integration = (project in file("integration"))
       scalaTest % Test,
       scalaTestMockito % Test,
       typesafeConfig % Test,
-      "ch.qos.logback" % "logback-classic" % "1.5.28" % Test
+      "ch.qos.logback" % "logback-classic" % "1.5.29" % Test
     ),
     Test / fork := false,
     Test / parallelExecution := false
